@@ -1,0 +1,22 @@
+# Downloaded data
+downloads/
+
+# Real config (contains account numbers)
+config.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store

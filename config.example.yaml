@@ -1,0 +1,13 @@
+users:
+  - email: "you@example.com"
+    customer_id: "00000000000"
+    accounts:
+      - id: "1234567"
+        name: "ISA"
+        start_date: "2024-01-01"
+        currencies: ["GBP"]
+
+      - id: "7654321"
+        name: "Trading"
+        start_date: "2023-06-01"
+        currencies: ["GBP", "USD"]
