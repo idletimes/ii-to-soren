@@ -411,6 +411,14 @@ def push_to_cgt(config, account_filter=None):
             # Push transactions first (securities get richer info from transaction data)
             for csv_file in sorted(account_dir.glob("transactions_*.csv")):
                 fname = csv_file.name
+
+                # Skip header-only files (no transaction data)
+                lines = csv_file.read_text().strip().splitlines()
+                if len(lines) <= 1:
+                    print(f"  {ii_account_id}/{fname}: " + colour("skipping — no data rows (header only)", YELLOW))
+                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
+                    continue
+
                 if cgt_should_skip_transaction(fname, uploaded_tx):
                     print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
                     summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
