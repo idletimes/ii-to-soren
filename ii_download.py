@@ -5,8 +5,10 @@ import argparse
 import base64
 import getpass
 import json
+import random
 import re
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -74,6 +76,16 @@ def get_token(email, token_arg=None):
     return token
 
 
+def ii_throttle(config):
+    """Sleep for a random delay between II API calls."""
+    delay = config.get("ii_request_delay", {})
+    min_s = delay.get("min", 1)
+    max_s = delay.get("max", 3)
+    if max_s > 0:
+        wait = random.uniform(min_s, max_s)
+        time.sleep(wait)
+
+
 def make_headers(token):
     return {
         "accept": "text/csv",
@@ -84,7 +96,7 @@ def make_headers(token):
     }
 
 
-def download_portfolio(customer_id, account, token, user_dir):
+def download_portfolio(customer_id, account, token, user_dir, config):
     """Download current portfolio valuation CSV."""
     account_id = account["id"]
     account_name = account.get("name", account_id)
@@ -97,6 +109,7 @@ def download_portfolio(customer_id, account, token, user_dir):
     url = f"{BASE_URL}/2/customers/{customer_id}/accounts/{account_id}/portfolio/export"
     print(f"  Downloading portfolio for {account_name} ({account_id})...", end=" ")
 
+    ii_throttle(config)
     resp = requests.get(url, headers=make_headers(token))
     if resp.status_code in (401, 403):
         print(colour("AUTH FAILED — token expired or invalid", RED))
@@ -185,7 +198,7 @@ def find_transaction_files(account_dir, ccy):
     return files
 
 
-def download_transactions(customer_id, account, token, user_dir):
+def download_transactions(customer_id, account, token, user_dir, config):
     """Download transaction statement CSVs for each currency.
 
     Re-run logic:
@@ -257,6 +270,7 @@ def download_transactions(customer_id, account, token, user_dir):
             )
             print(f"  Transactions {account_name}/{ccy} ({fname})...", end=" ")
 
+            ii_throttle(config)
             resp = requests.get(url, headers=make_headers(token))
             if resp.status_code in (401, 403):
                 print(colour("AUTH FAILED", RED))
@@ -274,6 +288,174 @@ def download_transactions(customer_id, account, token, user_dir):
         results.append("downloaded" if ccy_ok else "error")
 
     return results
+
+
+# ── Push to tradeCGT ──────────────────────────────────────────────────────
+
+def cgt_fetch_account_map(api_url, cgt_token):
+    """Fetch tradeCGT accounts and build accountNumber → cgt_id mapping."""
+    resp = requests.get(
+        f"{api_url}/api/accounts",
+        headers={"Authorization": f"Bearer {cgt_token}"},
+    )
+    if resp.status_code != 200:
+        print(colour(f"  CGT API error listing accounts: HTTP {resp.status_code}", RED))
+        print(colour(f"    {resp.text[:500]}", RED))
+        return None
+    accounts = resp.json()
+    return {a["accountNumber"]: a["id"] for a in accounts}
+
+
+def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id):
+    """Fetch list of already-uploaded files for a tradeCGT account."""
+    resp = requests.get(
+        f"{api_url}/api/accounts/{cgt_account_id}/files",
+        headers={"Authorization": f"Bearer {cgt_token}"},
+    )
+    if resp.status_code != 200:
+        return {"transactions": [], "valuations": []}
+    return resp.json()
+
+
+def cgt_should_skip_transaction(file_name, uploaded_transactions):
+    """Check if a transaction file has already been uploaded (by filename)."""
+    for t in uploaded_transactions:
+        if t.get("file_name") == file_name:
+            return True
+    return False
+
+
+def cgt_should_skip_valuation(valuation_date_str, uploaded_valuations):
+    """Check if a valuation for this date already exists."""
+    for v in uploaded_valuations:
+        if v.get("valuation_date") == valuation_date_str:
+            return True
+    return False
+
+
+def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, valuation_date=None):
+    """Upload a CSV file to the tradeCGT API."""
+    data = {"file_type": file_type}
+    if valuation_date:
+        data["valuation_date"] = valuation_date
+
+    with open(file_path, "rb") as f:
+        resp = requests.post(
+            f"{api_url}/api/accounts/{cgt_account_id}/files",
+            headers={"Authorization": f"Bearer {cgt_token}"},
+            data=data,
+            files={"upload": (file_path.name, f, "text/csv")},
+        )
+
+    if resp.status_code in (200, 201):
+        return True
+    else:
+        print(colour(f"HTTP {resp.status_code}", RED))
+        print(colour(f"    {resp.text[:500]}", RED))
+        return False
+
+
+def push_to_cgt(config, account_filter=None):
+    """Push downloaded CSV files to the tradeCGT API."""
+    cgt_config = config.get("cgt", {})
+    api_url = cgt_config.get("api_url")
+    if not api_url:
+        print(colour("No cgt.api_url in config — cannot push.", RED))
+        return
+
+    cgt_token = getpass.getpass("Paste tradeCGT Bearer token: ").strip()
+    if cgt_token.lower().startswith("bearer "):
+        cgt_token = cgt_token[7:]
+
+    print()
+    print(colour(BOLD + "Fetching tradeCGT account mapping..." + RESET, BOLD))
+    account_map = cgt_fetch_account_map(api_url, cgt_token)
+    if account_map is None:
+        return
+
+    summary = []
+
+    # Walk all user download directories
+    if not DOWNLOADS_DIR.exists():
+        print(colour("No downloads directory found — download first.", RED))
+        return
+
+    for user_dir in sorted(DOWNLOADS_DIR.iterdir()):
+        if not user_dir.is_dir():
+            continue
+
+        print(colour(f"\n{'='*60}", BOLD))
+        print(colour(f" Pushing: {user_dir.name}", BOLD))
+        print(colour(f"{'='*60}", BOLD))
+
+        for account_dir in sorted(user_dir.iterdir()):
+            if not account_dir.is_dir():
+                continue
+
+            ii_account_id = account_dir.name
+            if account_filter and ii_account_id != account_filter:
+                continue
+
+            cgt_id = account_map.get(ii_account_id)
+            if cgt_id is None:
+                print(colour(f"  Account {ii_account_id}: no matching tradeCGT account — skipping", YELLOW))
+                continue
+
+            # Fetch what's already uploaded
+            uploaded = cgt_fetch_uploaded_files(api_url, cgt_token, cgt_id)
+            uploaded_tx = uploaded.get("transactions", [])
+            uploaded_val = uploaded.get("valuations", [])
+
+            # Process all CSV files in this account directory
+            for csv_file in sorted(account_dir.glob("*.csv")):
+                fname = csv_file.name
+
+                if fname.startswith("portfolio_"):
+                    # Portfolio / valuation file
+                    # Extract date from filename: portfolio_2026-02-27.csv
+                    m = re.match(r"^portfolio_(\d{4}-\d{2}-\d{2})\.csv$", fname)
+                    if not m:
+                        continue
+                    val_date = m.group(1)
+
+                    if cgt_should_skip_valuation(val_date, uploaded_val):
+                        print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
+                        summary.append(("Push valuation", f"{ii_account_id}/{fname}", "skipped"))
+                        continue
+
+                    print(f"  {ii_account_id}/{fname}...", end=" ")
+                    if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "valuations", val_date):
+                        print(colour("pushed", GREEN))
+                        summary.append(("Push valuation", f"{ii_account_id}/{fname}", "pushed"))
+                    else:
+                        summary.append(("Push valuation", f"{ii_account_id}/{fname}", "error"))
+
+                elif fname.startswith("transactions_"):
+                    # Transaction file
+                    if cgt_should_skip_transaction(fname, uploaded_tx):
+                        print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
+                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
+                        continue
+
+                    print(f"  {ii_account_id}/{fname}...", end=" ")
+                    if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "transactions"):
+                        print(colour("pushed", GREEN))
+                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "pushed"))
+                    else:
+                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "error"))
+
+    # Summary
+    print(colour(f"\n{'='*60}", BOLD))
+    print(colour(" Push Summary", BOLD))
+    print(colour(f"{'='*60}", BOLD))
+    for dtype, label, status in summary:
+        if status == "pushed":
+            icon = colour("OK", GREEN)
+        elif status == "skipped":
+            icon = colour("SKIP", YELLOW)
+        else:
+            icon = colour("FAIL", RED)
+        print(f"  [{icon}] {dtype}: {label}")
 
 
 def resolve_users(config, user_filter):
@@ -305,13 +487,21 @@ def main():
     parser.add_argument("--transactions", action="store_true", help="Download transaction statements only")
     parser.add_argument("--account", type=str, help="Download for a specific account ID only")
     parser.add_argument("--token", type=str, help="Bearer token (skip prompt — only works for single user)")
+    parser.add_argument("--push", action="store_true", help="Push downloaded CSVs to tradeCGT API")
+    parser.add_argument("--push-only", action="store_true", help="Push to tradeCGT without downloading first")
     parser.add_argument("--config", type=str, default=str(CONFIG_FILE), help="Path to config file")
     args = parser.parse_args()
+
+    config = load_config(Path(args.config))
+
+    # Push-only mode: skip downloads entirely
+    if args.push_only:
+        push_to_cgt(config, args.account)
+        return
 
     do_portfolio = args.portfolio or (not args.portfolio and not args.transactions)
     do_transactions = args.transactions or (not args.portfolio and not args.transactions)
 
-    config = load_config(Path(args.config))
     users = resolve_users(config, args.user)
 
     summary = []
@@ -339,14 +529,14 @@ def main():
         if do_portfolio:
             print(colour("  Portfolio valuations", BOLD))
             for account in accounts:
-                result = download_portfolio(customer_id, account, token, user_dir)
+                result = download_portfolio(customer_id, account, token, user_dir, config)
                 summary.append((email, "Portfolio", account.get("name", account["id"]), result))
             print()
 
         if do_transactions:
             print(colour("  Transaction statements", BOLD))
             for account in accounts:
-                results = download_transactions(customer_id, account, token, user_dir)
+                results = download_transactions(customer_id, account, token, user_dir, config)
                 for i, ccy in enumerate(account.get("currencies", ["GBP"])):
                     status = results[i] if i < len(results) else "error"
                     summary.append((email, "Transactions", f"{account.get('name', account['id'])}/{ccy}", status))
@@ -368,6 +558,10 @@ def main():
         else:
             icon = colour("FAIL", RED)
         print(f"    [{icon}] {dtype}: {label}")
+
+    # Push to tradeCGT if requested
+    if args.push:
+        push_to_cgt(config, args.account)
 
 
 if __name__ == "__main__":

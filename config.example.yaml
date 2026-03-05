@@ -1,3 +1,11 @@
+# Random delay (seconds) between II API requests to avoid rate limiting
+ii_request_delay:
+  min: 1
+  max: 3
+
+cgt:
+  api_url: "http://localhost:8000"
+
 users:
   - email: "you@example.com"
     customer_id: "00000000000"
