@@ -203,7 +203,7 @@ def download_transactions(customer_id, account, token, user_dir, config):
 
     Re-run logic:
     - Full-year files (historic, complete) are never re-downloaded.
-    - Partial current-year files are deleted and re-fetched with today's date,
+    - Partial current-year files are deleted and re-fetched up to the cutoff date,
       so transactions that posted after the last run are captured.
     """
     account_id = account["id"]
@@ -211,6 +211,8 @@ def download_transactions(customer_id, account, token, user_dir, config):
     currencies = account.get("currencies", ["GBP"])
     start_date = account.get("start_date", "2024-01-01")
     today = date.today()
+    # Default to yesterday to avoid partial-day issues; override with --to-date
+    cutoff = config.get("_to_date", today - timedelta(days=1))
     results = []
 
     out_dir = user_dir / account_id
@@ -229,9 +231,9 @@ def download_transactions(customer_id, account, token, user_dir, config):
         # Find and remove any partial (non-full-year) files that we'll re-download
         # We keep partials from historic years (e.g. 2022-06-01_2022-12-31 for a mid-year start)
         for fpath, start, end, is_full in existing:
-            if not is_full and end.year == today.year:
-                # Current-year partial — delete so we re-fetch with today's date
-                print(f"  Transactions {account_name}/{ccy}: replacing {fpath.name} (refreshing to today)")
+            if not is_full and end.year == cutoff.year:
+                # Current-year partial — delete so we re-fetch up to cutoff
+                print(f"  Transactions {account_name}/{ccy}: replacing {fpath.name} (refreshing to {cutoff.isoformat()})")
                 fpath.unlink()
 
         # Re-scan after cleanup to determine where to start from
@@ -246,12 +248,12 @@ def download_transactions(customer_id, account, token, user_dir, config):
         else:
             from_date = date.fromisoformat(start_date)
 
-        if from_date >= today:
+        if from_date >= cutoff:
             print(f"  Transactions {account_name}/{ccy}: " + colour("up to date", YELLOW))
             results.append("skipped")
             continue
 
-        chunks = build_year_chunks(from_date, today)
+        chunks = build_year_chunks(from_date, cutoff)
         ccy_ok = True
 
         for chunk_from, chunk_to in chunks:
@@ -406,43 +408,40 @@ def push_to_cgt(config, account_filter=None):
             uploaded_tx = uploaded.get("transactions", [])
             uploaded_val = uploaded.get("valuations", [])
 
-            # Process all CSV files in this account directory
-            for csv_file in sorted(account_dir.glob("*.csv")):
+            # Push transactions first (securities get richer info from transaction data)
+            for csv_file in sorted(account_dir.glob("transactions_*.csv")):
                 fname = csv_file.name
+                if cgt_should_skip_transaction(fname, uploaded_tx):
+                    print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
+                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
+                    continue
 
-                if fname.startswith("portfolio_"):
-                    # Portfolio / valuation file
-                    # Extract date from filename: portfolio_2026-02-27.csv
-                    m = re.match(r"^portfolio_(\d{4}-\d{2}-\d{2})\.csv$", fname)
-                    if not m:
-                        continue
-                    val_date = m.group(1)
+                print(f"  {ii_account_id}/{fname}...", end=" ")
+                if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "transactions"):
+                    print(colour("pushed", GREEN))
+                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "pushed"))
+                else:
+                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "error"))
 
-                    if cgt_should_skip_valuation(val_date, uploaded_val):
-                        print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
-                        summary.append(("Push valuation", f"{ii_account_id}/{fname}", "skipped"))
-                        continue
+            # Then push valuations
+            for csv_file in sorted(account_dir.glob("portfolio_*.csv")):
+                fname = csv_file.name
+                m = re.match(r"^portfolio_(\d{4}-\d{2}-\d{2})\.csv$", fname)
+                if not m:
+                    continue
+                val_date = m.group(1)
 
-                    print(f"  {ii_account_id}/{fname}...", end=" ")
-                    if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "valuations", val_date):
-                        print(colour("pushed", GREEN))
-                        summary.append(("Push valuation", f"{ii_account_id}/{fname}", "pushed"))
-                    else:
-                        summary.append(("Push valuation", f"{ii_account_id}/{fname}", "error"))
+                if cgt_should_skip_valuation(val_date, uploaded_val):
+                    print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
+                    summary.append(("Push valuation", f"{ii_account_id}/{fname}", "skipped"))
+                    continue
 
-                elif fname.startswith("transactions_"):
-                    # Transaction file
-                    if cgt_should_skip_transaction(fname, uploaded_tx):
-                        print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
-                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
-                        continue
-
-                    print(f"  {ii_account_id}/{fname}...", end=" ")
-                    if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "transactions"):
-                        print(colour("pushed", GREEN))
-                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "pushed"))
-                    else:
-                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "error"))
+                print(f"  {ii_account_id}/{fname}...", end=" ")
+                if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "valuations", val_date):
+                    print(colour("pushed", GREEN))
+                    summary.append(("Push valuation", f"{ii_account_id}/{fname}", "pushed"))
+                else:
+                    summary.append(("Push valuation", f"{ii_account_id}/{fname}", "error"))
 
     # Summary
     print(colour(f"\n{'='*60}", BOLD))
@@ -487,12 +486,17 @@ def main():
     parser.add_argument("--transactions", action="store_true", help="Download transaction statements only")
     parser.add_argument("--account", type=str, help="Download for a specific account ID only")
     parser.add_argument("--token", type=str, help="Bearer token (skip prompt — only works for single user)")
+    parser.add_argument("--to-date", type=str, help="Transaction end date (YYYY-MM-DD). Defaults to yesterday")
     parser.add_argument("--push", action="store_true", help="Push downloaded CSVs to tradeCGT API")
     parser.add_argument("--push-only", action="store_true", help="Push to tradeCGT without downloading first")
     parser.add_argument("--config", type=str, default=str(CONFIG_FILE), help="Path to config file")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
+
+    # Stash the to-date override in config for download_transactions to pick up
+    if args.to_date:
+        config["_to_date"] = date.fromisoformat(args.to_date)
 
     # Push-only mode: skip downloads entirely
     if args.push_only:
