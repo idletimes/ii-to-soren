@@ -54,6 +54,9 @@ python ii_download.py --user harry --account 0970887
 # Pass token directly (single user only)
 python ii_download.py --user harry --token "eyJhbG..."
 
+# Override the transaction end date (default: yesterday)
+python ii_download.py --to-date 2026-03-01
+
 # Download and push to tradeCGT
 python ii_download.py --push
 
@@ -121,7 +124,7 @@ downloads/
 ## Re-run behaviour
 
 - **Full calendar year files** (e.g. `transactions_GBP_2024.csv`) are never re-downloaded
-- **Current year partials** (e.g. `transactions_GBP_2026-01-01_2026-02-15.csv`) are replaced with a fresh download up to today
+- **Current year partials** (e.g. `transactions_GBP_2026-01-01_2026-02-15.csv`) are replaced with a fresh download up to yesterday (default) or a custom `--to-date`
 - **Portfolio files** are always downloaded fresh (snapshot of current holdings)
 
 ## Push to tradeCGT

@@ -327,6 +327,27 @@ def cgt_should_skip_transaction(file_name, uploaded_transactions):
     return False
 
 
+def is_current_year_partial(filename):
+    """True if this is a current-year partial transaction file (not a full-year file)."""
+    m = re.match(r"^transactions_[A-Z]+_\d{4}-\d{2}-\d{2}_(\d{4})-\d{2}-\d{2}\.csv$", filename)
+    return bool(m and int(m.group(1)) == date.today().year)
+
+
+def ccy_from_tx_filename(filename):
+    """Extract currency code from a transaction filename."""
+    m = re.match(r"^transactions_([A-Z]+)_", filename)
+    return m.group(1) if m else None
+
+
+def cgt_delete_file(api_url, cgt_token, cgt_account_id, file_id):
+    """Delete a file from the tradeCGT API by its ID."""
+    resp = requests.delete(
+        f"{api_url}/api/accounts/{cgt_account_id}/files/{file_id}",
+        headers={"Authorization": f"Bearer {cgt_token}"},
+    )
+    return resp.status_code in (200, 204)
+
+
 def cgt_should_skip_valuation(valuation_date_str, uploaded_valuations):
     """Check if a valuation for this date already exists."""
     for v in uploaded_valuations:
@@ -419,10 +440,25 @@ def push_to_cgt(config, account_filter=None):
                     summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
                     continue
 
-                if cgt_should_skip_transaction(fname, uploaded_tx):
-                    print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
-                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
-                    continue
+                if is_current_year_partial(fname):
+                    # Delete any stale current-year partials for this currency from tradeCGT,
+                    # then upload unconditionally — the local file is always the freshest version.
+                    ccy = ccy_from_tx_filename(fname)
+                    for tx in uploaded_tx:
+                        tx_fname = tx.get("file_name", "")
+                        if is_current_year_partial(tx_fname) and ccy_from_tx_filename(tx_fname) == ccy:
+                            print(f"  {ii_account_id}/{tx_fname}: " + colour("deleting stale partial from tradeCGT...", YELLOW), end=" ")
+                            if cgt_delete_file(api_url, cgt_token, cgt_id, tx["id"]):
+                                print(colour("deleted", GREEN))
+                                summary.append(("Push transactions", f"{ii_account_id}/{tx_fname}", "deleted"))
+                            else:
+                                print(colour("delete failed", RED))
+                                summary.append(("Push transactions", f"{ii_account_id}/{tx_fname}", "error"))
+                else:
+                    if cgt_should_skip_transaction(fname, uploaded_tx):
+                        print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
+                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
+                        continue
 
                 print(f"  {ii_account_id}/{fname}...", end=" ")
                 if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "transactions"):
@@ -457,9 +493,11 @@ def push_to_cgt(config, account_filter=None):
     print(colour(f"{'='*60}", BOLD))
     for dtype, label, status in summary:
         if status == "pushed":
-            icon = colour("OK", GREEN)
+            icon = colour("OK  ", GREEN)
         elif status == "skipped":
             icon = colour("SKIP", YELLOW)
+        elif status == "deleted":
+            icon = colour("DEL ", YELLOW)
         else:
             icon = colour("FAIL", RED)
         print(f"  [{icon}] {dtype}: {label}")
