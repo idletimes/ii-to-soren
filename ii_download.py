@@ -119,7 +119,7 @@ def download_portfolio(customer_id, account, token, user_dir, config):
         print(colour(f"    Response: {resp.text[:500]}", RED))
         return "error"
 
-    out_file.write_text(resp.text)
+    out_file.write_text(resp.content.decode('utf-8-sig').replace('\ufeff', ''), encoding='utf-8')
     print(colour(f"saved → {out_file}", GREEN))
     return "downloaded"
 
@@ -284,7 +284,7 @@ def download_transactions(customer_id, account, token, user_dir, config):
                 ccy_ok = False
                 break
 
-            out_file.write_text(resp.text)
+            out_file.write_text(resp.content.decode('utf-8-sig').replace('\ufeff', ''), encoding='utf-8')
             print(colour(f"saved → {out_file}", GREEN))
 
         results.append("downloaded" if ccy_ok else "error")
@@ -362,13 +362,13 @@ def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, va
     if valuation_date:
         data["valuation_date"] = valuation_date
 
-    with open(file_path, "rb") as f:
-        resp = requests.post(
-            f"{api_url}/api/accounts/{cgt_account_id}/files",
-            headers={"Authorization": f"Bearer {cgt_token}"},
-            data=data,
-            files={"upload": (file_path.name, f, "text/csv")},
-        )
+    content = file_path.read_bytes().replace(b'\xef\xbb\xbf', b'')
+    resp = requests.post(
+        f"{api_url}/api/accounts/{cgt_account_id}/files",
+        headers={"Authorization": f"Bearer {cgt_token}"},
+        data=data,
+        files={"upload": (file_path.name, content, "text/csv")},
+    )
 
     if resp.status_code in (200, 201):
         return True
