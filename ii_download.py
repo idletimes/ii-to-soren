@@ -308,7 +308,7 @@ def cgt_fetch_account_map(api_url, cgt_token):
     return {a["accountNumber"]: a["id"] for a in accounts}
 
 
-def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id):
+def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id, debug=False):
     """Fetch list of already-uploaded files for a tradeCGT account."""
     resp = requests.get(
         f"{api_url}/api/accounts/{cgt_account_id}/files",
@@ -316,7 +316,10 @@ def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id):
     )
     if resp.status_code != 200:
         return {"transactions": [], "valuations": []}
-    return resp.json()
+    data = resp.json()
+    if debug:
+        print(f"    [debug] GET /api/accounts/{cgt_account_id}/files → {json.dumps(data, indent=2)}")
+    return data
 
 
 def cgt_should_skip_transaction(file_name, uploaded_transactions):
@@ -349,9 +352,13 @@ def cgt_delete_file(api_url, cgt_token, cgt_account_id, file_id):
 
 
 def cgt_should_skip_valuation(valuation_date_str, uploaded_valuations):
-    """Check if a valuation for this date already exists."""
+    """Check if an investments valuation for this date already exists.
+
+    Ignores cash valuations (manually entered via UI) — only investments-type
+    uploads should block re-uploading a portfolio CSV.
+    """
     for v in uploaded_valuations:
-        if v.get("valuation_date") == valuation_date_str:
+        if v.get("valuation_type") == "investments" and v.get("valuation_date") == valuation_date_str:
             return True
     return False
 
@@ -378,7 +385,7 @@ def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, va
         return False
 
 
-def push_to_cgt(config, account_filter=None):
+def push_to_cgt(config, account_filter=None, debug=False):
     """Push downloaded CSV files to the tradeCGT API."""
     cgt_config = config.get("cgt", {})
     api_url = cgt_config.get("api_url")
@@ -425,7 +432,7 @@ def push_to_cgt(config, account_filter=None):
                 continue
 
             # Fetch what's already uploaded
-            uploaded = cgt_fetch_uploaded_files(api_url, cgt_token, cgt_id)
+            uploaded = cgt_fetch_uploaded_files(api_url, cgt_token, cgt_id, debug=debug)
             uploaded_tx = uploaded.get("transactions", [])
             uploaded_val = uploaded.get("valuations", [])
 
@@ -536,6 +543,7 @@ def main():
     parser.add_argument("--push", action="store_true", help="Push downloaded CSVs to tradeCGT API")
     parser.add_argument("--push-only", action="store_true", help="Push to tradeCGT without downloading first")
     parser.add_argument("--config", type=str, default=str(CONFIG_FILE), help="Path to config file")
+    parser.add_argument("--debug", action="store_true", help="Print raw tradeCGT API responses for debugging")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -546,7 +554,7 @@ def main():
 
     # Push-only mode: skip downloads entirely
     if args.push_only:
-        push_to_cgt(config, args.account)
+        push_to_cgt(config, args.account, debug=args.debug)
         return
 
     do_portfolio = args.portfolio or (not args.portfolio and not args.transactions)
@@ -611,7 +619,7 @@ def main():
 
     # Push to tradeCGT if requested
     if args.push:
-        push_to_cgt(config, args.account)
+        push_to_cgt(config, args.account, debug=args.debug)
 
 
 if __name__ == "__main__":
