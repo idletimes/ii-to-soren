@@ -510,7 +510,28 @@ def push_to_cgt(config, account_filter=None, debug=False):
                 else:
                     summary.append(("Push transactions", f"{ii_account_id}/{fname}", "error"))
 
-            # Then push valuations
+            # Then push cash balances
+            for csv_file in sorted(account_dir.glob("cash_*.csv")):
+                fname = csv_file.name
+                m = re.match(r"^cash_(\d{4}-\d{2}-\d{2})\.csv$", fname)
+                if not m:
+                    continue
+                val_date = m.group(1)
+
+                # Skip if already uploaded (match by filename)
+                if any(v.get("file_name") == fname for v in uploaded_val):
+                    print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
+                    summary.append(("Push cash", f"{ii_account_id}/{fname}", "skipped"))
+                    continue
+
+                print(f"  {ii_account_id}/{fname}...", end=" ")
+                if cgt_upload_file(api_url, cgt_token, cgt_id, csv_file, "valuations", val_date):
+                    print(colour("pushed", GREEN))
+                    summary.append(("Push cash", f"{ii_account_id}/{fname}", "pushed"))
+                else:
+                    summary.append(("Push cash", f"{ii_account_id}/{fname}", "error"))
+
+            # Then push investment valuations
             for csv_file in sorted(account_dir.glob("portfolio_*.csv")):
                 fname = csv_file.name
                 m = re.match(r"^portfolio_(\d{4}-\d{2}-\d{2})\.csv$", fname)
