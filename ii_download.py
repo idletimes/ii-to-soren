@@ -124,6 +124,42 @@ def download_portfolio(customer_id, account, token, user_dir, config):
     return "downloaded"
 
 
+def download_cash(customer_id, account, token, user_dir, config):
+    """Download cash balance from the portfolio JSON endpoint and save as cash_YYYY-MM-DD.csv."""
+    account_id = account["id"]
+    account_name = account.get("name", account_id)
+    today = date.today().isoformat()
+
+    out_dir = user_dir / account_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"cash_{today}.csv"
+
+    url = f"{BASE_URL}/2/customers/{customer_id}/accounts/{account_id}/portfolio"
+    print(f"  Downloading cash balance for {account_name} ({account_id})...", end=" ")
+
+    ii_throttle(config)
+    headers = {**make_headers(token), "accept": "application/json"}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code in (401, 403):
+        print(colour("AUTH FAILED — token expired or invalid", RED))
+        return "error"
+    if resp.status_code != 200:
+        print(colour(f"HTTP {resp.status_code}", RED))
+        print(colour(f"    Response: {resp.text[:500]}", RED))
+        return "error"
+
+    total = resp.json().get("total", {})
+    cash_value = total.get("totalCashValue")
+    currency = total.get("currency", {}).get("code", "GBP")
+
+    if cash_value is None:
+        print(colour("no cash data in response", YELLOW))
+        return "error"
+
+    out_file.write_text(f"Cash_{currency}\n{cash_value}\n", encoding="utf-8")
+    print(colour(f"saved → {out_file}  ({currency} {cash_value})", GREEN))
+    return "downloaded"
+
 
 def build_year_chunks(from_date, to_date):
     """Split a date range into calendar-year-aligned chunks.
@@ -589,6 +625,10 @@ def main():
             for account in accounts:
                 result = download_portfolio(customer_id, account, token, user_dir, config)
                 summary.append((email, "Portfolio", account.get("name", account["id"]), result))
+            print(colour("  Cash balances", BOLD))
+            for account in accounts:
+                result = download_cash(customer_id, account, token, user_dir, config)
+                summary.append((email, "Cash", account.get("name", account["id"]), result))
             print()
 
         if do_transactions:
