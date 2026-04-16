@@ -76,6 +76,13 @@ with st.sidebar:
         st.info("Copy config.example.yaml → config.yaml and fill in your details.")
         st.stop()
 
+# ── Session state ─────────────────────────────────────────────────────────────
+
+for _key, _default in [("dl_running", False), ("dl_args", []), ("dl_env", {}),
+                        ("push_running", False), ("push_args", []), ("push_env", {})]:
+    if _key not in st.session_state:
+        st.session_state[_key] = _default
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
 tab_dl, tab_push, tab_bm = st.tabs(["📥 Download", "📤 Push to tradeCGT", "🔖 Bookmarklet"])
@@ -95,50 +102,59 @@ with tab_dl:
             "II Bearer Token",
             type="password",
             placeholder="Paste your token here — use the 🔖 Bookmarklet tab to get it",
+            disabled=st.session_state.dl_running,
         )
     with col_user:
-        selected_user = st.selectbox("User", user_emails)
+        selected_user = st.selectbox("User", user_emails, disabled=st.session_state.dl_running)
 
     col_port, col_tx, col_acct = st.columns(3)
-    do_portfolio = col_port.checkbox("Portfolio & Cash", value=True)
-    do_transactions = col_tx.checkbox("Transactions", value=True)
-    account_filter = col_acct.text_input("Account ID (optional)", placeholder="e.g. 0970887")
+    do_portfolio = col_port.checkbox("Portfolio & Cash", value=True, disabled=st.session_state.dl_running)
+    do_transactions = col_tx.checkbox("Transactions", value=True, disabled=st.session_state.dl_running)
+    account_filter = col_acct.text_input("Account ID (optional)", placeholder="e.g. 0970887",
+                                         disabled=st.session_state.dl_running)
 
     with st.expander("Advanced options"):
         to_date = st.date_input(
             "Transaction end date",
             value=date.today() - timedelta(days=1),
             help="Defaults to yesterday to avoid partial-day issues",
+            disabled=st.session_state.dl_running,
         )
-        also_push = st.checkbox("Push to tradeCGT immediately after download")
+        also_push = st.checkbox("Push to tradeCGT immediately after download",
+                                disabled=st.session_state.dl_running)
         cgt_token_dl = ""
         if also_push:
             cgt_token_dl = st.text_input(
                 "tradeCGT Bearer Token",
                 type="password",
                 key="cgt_dl",
+                disabled=st.session_state.dl_running,
             )
 
-    if st.button("▶ Run Download", type="primary", disabled=not ii_token):
+    if st.button("▶ Run Download", type="primary",
+                 disabled=not ii_token or st.session_state.dl_running):
         args = ["--user", selected_user, "--token", ii_token]
-
         if do_portfolio and not do_transactions:
             args += ["--portfolio"]
         elif do_transactions and not do_portfolio:
             args += ["--transactions"]
-
         if account_filter:
             args += ["--account", account_filter]
-
         args += ["--to-date", to_date.isoformat()]
-
         env_extra = {}
         if also_push:
             args += ["--push"]
             if cgt_token_dl:
                 env_extra["CGT_TOKEN"] = cgt_token_dl
+        st.session_state.dl_args = args
+        st.session_state.dl_env = env_extra
+        st.session_state.dl_running = True
+        st.rerun()
 
-        run_and_stream(args, env_extra)
+    if st.session_state.dl_running:
+        run_and_stream(st.session_state.dl_args, st.session_state.dl_env)
+        st.session_state.dl_running = False
+        st.rerun()
 
 
 # ─── Push ─────────────────────────────────────────────────────────────────────
@@ -152,20 +168,29 @@ with tab_push:
             "tradeCGT Bearer Token",
             type="password",
             key="cgt_push",
+            disabled=st.session_state.push_running,
         )
     with col_acct2:
         account_filter_push = st.text_input(
             "Account ID (optional)",
             placeholder="e.g. 0970887",
             key="acct_push",
+            disabled=st.session_state.push_running,
         )
 
-    if st.button("▶ Push", type="primary", disabled=not cgt_token):
-        args = ["--push-only"]
+    if st.button("▶ Push", type="primary",
+                 disabled=not cgt_token or st.session_state.push_running):
+        st.session_state.push_args = ["--push-only"]
         if account_filter_push:
-            args += ["--account", account_filter_push]
+            st.session_state.push_args += ["--account", account_filter_push]
+        st.session_state.push_env = {"CGT_TOKEN": cgt_token}
+        st.session_state.push_running = True
+        st.rerun()
 
-        run_and_stream(args, {"CGT_TOKEN": cgt_token})
+    if st.session_state.push_running:
+        run_and_stream(st.session_state.push_args, st.session_state.push_env)
+        st.session_state.push_running = False
+        st.rerun()
 
 
 # ─── Bookmarklet ──────────────────────────────────────────────────────────────
