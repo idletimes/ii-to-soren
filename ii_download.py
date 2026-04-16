@@ -5,6 +5,7 @@ import argparse
 import base64
 import getpass
 import json
+import os
 import random
 import re
 import sys
@@ -429,7 +430,7 @@ def push_to_cgt(config, account_filter=None, debug=False):
         print(colour("No cgt.api_url in config — cannot push.", RED))
         return
 
-    cgt_token = getpass.getpass("Paste tradeCGT Bearer token: ").strip()
+    cgt_token = os.environ.get("CGT_TOKEN") or getpass.getpass("Paste tradeCGT Bearer token: ").strip()
     if cgt_token.lower().startswith("bearer "):
         cgt_token = cgt_token[7:]
 
