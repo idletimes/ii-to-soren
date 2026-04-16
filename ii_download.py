@@ -72,7 +72,8 @@ def get_token(email, token_arg=None):
         mins = int(remaining // 60)
         print(colour(f"  Token valid for ~{mins} minutes (expires {exp.strftime('%H:%M:%S')})", GREEN))
     else:
-        print(colour("  Could not decode token expiry — proceeding anyway.", YELLOW))
+        print(colour("  Invalid token — could not be decoded. Please paste a fresh token.", RED))
+        sys.exit(1)
 
     return token
 
