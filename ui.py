@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Streamlit UI for ii-csv-downloader."""
 
+import copy
 import os
 import re
 import subprocess
@@ -84,7 +85,7 @@ for _key, _default in [("dl_running", False), ("dl_args", []), ("dl_env", {}),
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_dl, tab_push, tab_bm = st.tabs(["📥 Download", "📤 Push to tradeCGT", "🔖 Bookmarklet"])
+tab_dl, tab_push, tab_cfg, tab_bm = st.tabs(["📥 Download", "📤 Push to tradeCGT", "⚙️ Config", "🔖 Bookmarklet"])
 
 
 # ─── Download ─────────────────────────────────────────────────────────────────
@@ -199,6 +200,127 @@ with tab_push:
                 state="complete" if ok else "error",
             )
         st.session_state.push_running = False
+        st.rerun()
+
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+
+CURRENCIES = ["AUD", "CAD", "CHF", "DKK", "EUR", "GBP", "HKD", "JPY", "NOK", "SEK", "SGD", "USD"]
+
+
+def sync_form_to_cfg():
+    """Collect current widget values from session state into cfg_edit."""
+    cfg = st.session_state.cfg_edit
+    cfg.setdefault("ii_request_delay", {})["min"] = st.session_state.get("cfg_delay_min", 1)
+    cfg["ii_request_delay"]["max"] = st.session_state.get("cfg_delay_max", 3)
+    cfg.setdefault("cgt", {})["api_url"] = st.session_state.get("cfg_cgt_url", "")
+    for i, user in enumerate(cfg.get("users", [])):
+        user["email"] = st.session_state.get(f"u{i}_email", user.get("email", ""))
+        user["customer_id"] = st.session_state.get(f"u{i}_cid", user.get("customer_id", ""))
+        for j, acct in enumerate(user.get("accounts", [])):
+            acct["name"] = st.session_state.get(f"u{i}_a{j}_name", acct.get("name", ""))
+            acct["id"] = st.session_state.get(f"u{i}_a{j}_id", acct.get("id", ""))
+            acct["start_date"] = st.session_state.get(f"u{i}_a{j}_start", acct.get("start_date", ""))
+            acct["currencies"] = st.session_state.get(f"u{i}_a{j}_cur", acct.get("currencies", ["GBP"]))
+
+
+with tab_cfg:
+    st.header("Configuration")
+
+    if "cfg_edit" not in st.session_state:
+        st.session_state.cfg_edit = copy.deepcopy(config)
+
+    cfg = st.session_state.cfg_edit
+
+    # ── Global settings ───────────────────────────────────────────────────────
+    st.subheader("Global Settings")
+    col1, col2, col3 = st.columns([1, 1, 3])
+    col1.number_input(
+        "Request delay min (s)", min_value=0, max_value=60,
+        value=int(cfg.get("ii_request_delay", {}).get("min", 1)),
+        key="cfg_delay_min",
+    )
+    col2.number_input(
+        "Request delay max (s)", min_value=0, max_value=60,
+        value=int(cfg.get("ii_request_delay", {}).get("max", 3)),
+        key="cfg_delay_max",
+    )
+    col3.text_input(
+        "tradeCGT API URL",
+        value=cfg.get("cgt", {}).get("api_url", ""),
+        key="cfg_cgt_url",
+    )
+
+    # ── Users & accounts ──────────────────────────────────────────────────────
+    st.subheader("Users & Accounts")
+
+    for i, user in enumerate(cfg.get("users", [])):
+        with st.expander(f"👤  {user.get('email', 'New User')}", expanded=True):
+            col_e, col_c, col_del = st.columns([3, 2, 1])
+            col_e.text_input("Email", value=user.get("email", ""), key=f"u{i}_email")
+            col_c.text_input("Customer ID", value=user.get("customer_id", ""), key=f"u{i}_cid")
+            if col_del.button("🗑 Remove user", key=f"del_user_{i}"):
+                sync_form_to_cfg()
+                cfg["users"].pop(i)
+                st.rerun()
+
+            st.caption("**Accounts**")
+
+            for j, acct in enumerate(user.get("accounts", [])):
+                with st.container(border=True):
+                    col_n, col_id, col_d, col_cur, col_a = st.columns([2, 2, 2, 4, 1])
+                    col_n.text_input(
+                        "Name", value=acct.get("name", ""), key=f"u{i}_a{j}_name"
+                    )
+                    col_id.text_input(
+                        "Account ID", value=acct.get("id", ""), key=f"u{i}_a{j}_id"
+                    )
+                    col_d.text_input(
+                        "Start date", value=acct.get("start_date", ""),
+                        placeholder="YYYY-MM-DD", key=f"u{i}_a{j}_start",
+                    )
+                    col_cur.multiselect(
+                        "Currencies", CURRENCIES,
+                        default=acct.get("currencies", ["GBP"]),
+                        key=f"u{i}_a{j}_cur",
+                    )
+                    col_a.markdown("<br>", unsafe_allow_html=True)
+                    if col_a.button("🗑", key=f"del_acct_{i}_{j}", help="Remove account"):
+                        sync_form_to_cfg()
+                        user["accounts"].pop(j)
+                        st.rerun()
+
+            if st.button("＋ Add Account", key=f"add_acct_{i}"):
+                sync_form_to_cfg()
+                user["accounts"].append({
+                    "id": "", "name": "",
+                    "start_date": str(date.today()),
+                    "currencies": ["GBP"],
+                })
+                st.rerun()
+
+    if st.button("＋ Add User"):
+        sync_form_to_cfg()
+        cfg["users"].append({"email": "", "customer_id": "", "accounts": []})
+        st.rerun()
+
+    st.divider()
+
+    col_save, col_reset, _ = st.columns([2, 2, 8])
+
+    if col_save.button("💾 Save Config", type="primary"):
+        sync_form_to_cfg()
+        with open(CONFIG_FILE, "w") as f:
+            yaml.dump(
+                st.session_state.cfg_edit, f,
+                default_flow_style=False, sort_keys=False, allow_unicode=True,
+            )
+        st.success("✓ Config saved")
+        del st.session_state.cfg_edit   # reload from file on next run
+        st.rerun()
+
+    if col_reset.button("↺ Reset from file"):
+        del st.session_state.cfg_edit
         st.rerun()
 
 
