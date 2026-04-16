@@ -99,7 +99,7 @@ with tab_dl:
     with col_token:
         ii_token = st.text_input(
             "II Bearer Token",
-            type="password",
+            type="default",
             placeholder="Paste your token here — use the 🔖 Bookmarklet tab to get it",
             disabled=st.session_state.dl_running,
         )
@@ -125,7 +125,7 @@ with tab_dl:
         if also_push:
             cgt_token_dl = st.text_input(
                 "tradeCGT Bearer Token",
-                type="password",
+                type="default",
                 key="cgt_dl",
                 disabled=st.session_state.dl_running,
             )
@@ -170,7 +170,7 @@ with tab_push:
     with col_token2:
         cgt_token = st.text_input(
             "tradeCGT Bearer Token",
-            type="password",
+            type="default",
             key="cgt_push",
             disabled=st.session_state.push_running,
         )
