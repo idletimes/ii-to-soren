@@ -33,7 +33,7 @@ def strip_ansi(text):
 
 
 def run_and_stream(args, env_extra=None):
-    """Run ii_download.py, streaming output into a st.code block."""
+    """Run ii_download.py, streaming output into a st.code block. Returns True on success."""
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
@@ -53,8 +53,7 @@ def run_and_stream(args, env_extra=None):
         lines.append(strip_ansi(line))
         output_box.code("".join(lines), language=None)
     proc.wait()
-    if proc.returncode != 0:
-        st.error(f"Process exited with code {proc.returncode}")
+    return proc.returncode == 0
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -152,7 +151,12 @@ with tab_dl:
         st.rerun()
 
     if st.session_state.dl_running:
-        run_and_stream(st.session_state.dl_args, st.session_state.dl_env)
+        with st.status("Downloading from Interactive Investor…", expanded=True) as status:
+            ok = run_and_stream(st.session_state.dl_args, st.session_state.dl_env)
+            status.update(
+                label="Download complete ✓" if ok else "Download failed ✗",
+                state="complete" if ok else "error",
+            )
         st.session_state.dl_running = False
         st.rerun()
 
@@ -188,7 +192,12 @@ with tab_push:
         st.rerun()
 
     if st.session_state.push_running:
-        run_and_stream(st.session_state.push_args, st.session_state.push_env)
+        with st.status("Pushing to tradeCGT…", expanded=True) as status:
+            ok = run_and_stream(st.session_state.push_args, st.session_state.push_env)
+            status.update(
+                label="Push complete ✓" if ok else "Push failed ✗",
+                state="complete" if ok else "error",
+            )
         st.session_state.push_running = False
         st.rerun()
 
