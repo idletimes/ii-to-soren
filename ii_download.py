@@ -521,7 +521,11 @@ def push_to_cgt(config, account_filter=None, debug=False):
         print(colour("No cgt.api_url in config — cannot push.", RED))
         return
 
-    cgt_token = os.environ.get("CGT_TOKEN") or getpass.getpass("Paste tradeCGT Bearer token: ").strip()
+    cgt_token = (
+        os.environ.get("CGT_TOKEN")
+        or cgt_config.get("api_key")
+        or getpass.getpass("Paste tradeCGT Bearer token: ").strip()
+    )
     if cgt_token.lower().startswith("bearer "):
         cgt_token = cgt_token[7:]
 

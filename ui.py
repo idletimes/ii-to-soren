@@ -240,6 +240,8 @@ def show_onboarding():
         col2.number_input("Request delay max (s)", min_value=0, max_value=60,
                           value=int(cfg["ii_request_delay"]["max"]), key="wiz_dmax")
         col3.text_input("tradeCGT API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
+        st.text_input("tradeCGT API Key (optional — saves re-pasting each time)",
+                      value=cfg["cgt"].get("api_key", ""), key="wiz_cgt_key")
 
     # Render validation errors from previous submit attempt (above the button)
     for err in st.session_state.get("wiz_errors", []):
@@ -254,6 +256,11 @@ def show_onboarding():
         cfg["ii_request_delay"]["min"] = st.session_state.get("wiz_dmin", 1)
         cfg["ii_request_delay"]["max"] = st.session_state.get("wiz_dmax", 3)
         cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "http://localhost:8000")
+        key = st.session_state.get("wiz_cgt_key", "").strip()
+        if key:
+            cfg["cgt"]["api_key"] = key
+        else:
+            cfg["cgt"].pop("api_key", None)
 
         # Validate
         errors = []
@@ -392,12 +399,15 @@ with tab_dl:
                                       disabled=st.session_state.dl_running)
     account_filter = _dl_acct_map[_dl_acct_sel]
 
+    _saved_cgt_key = config.get("cgt", {}).get("api_key", "")
+
     also_push = st.checkbox("Push to tradeCGT after download", value=True,
                             disabled=st.session_state.dl_running)
     cgt_token_dl = ""
     if also_push:
         cgt_token_dl = st.text_input(
-            "tradeCGT Bearer Token",
+            "tradeCGT API Key",
+            value=_saved_cgt_key,
             type="default",
             key="cgt_dl",
             disabled=st.session_state.dl_running,
@@ -476,7 +486,8 @@ with tab_push:
     col_token2, col_acct2 = st.columns([3, 2])
     with col_token2:
         cgt_token = st.text_input(
-            "tradeCGT Bearer Token",
+            "tradeCGT API Key",
+            value=config.get("cgt", {}).get("api_key", ""),
             type="default",
             key="cgt_push",
             disabled=st.session_state.push_running,
@@ -528,6 +539,11 @@ def sync_form_to_cfg():
     cfg.setdefault("ii_request_delay", {})["min"] = st.session_state.get("cfg_delay_min", 1)
     cfg["ii_request_delay"]["max"] = st.session_state.get("cfg_delay_max", 3)
     cfg.setdefault("cgt", {})["api_url"] = st.session_state.get("cfg_cgt_url", "")
+    _key = st.session_state.get("cfg_cgt_key", "").strip()
+    if _key:
+        cfg["cgt"]["api_key"] = _key
+    else:
+        cfg["cgt"].pop("api_key", None)
     for i, user in enumerate(cfg.get("users", [])):
         user["email"] = st.session_state.get(f"u{i}_email", user.get("email", ""))
         for j, acct in enumerate(user.get("accounts", [])):
@@ -562,6 +578,12 @@ with tab_cfg:
         "tradeCGT API URL",
         value=cfg.get("cgt", {}).get("api_url", ""),
         key="cfg_cgt_url",
+    )
+    st.text_input(
+        "tradeCGT API Key",
+        value=cfg.get("cgt", {}).get("api_key", ""),
+        key="cfg_cgt_key",
+        help="Long-lived API key — stored in config.yaml (which is gitignored)",
     )
 
     # ── Users & accounts ──────────────────────────────────────────────────────
