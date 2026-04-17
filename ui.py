@@ -399,19 +399,12 @@ with tab_dl:
                                       disabled=st.session_state.dl_running)
     account_filter = _dl_acct_map[_dl_acct_sel]
 
-    _saved_cgt_key = config.get("cgt", {}).get("api_key", "")
+    _cgt_key = config.get("cgt", {}).get("api_key", "")
 
-    also_push = st.checkbox("Push to tradeCGT after download", value=True,
+    also_push = st.checkbox("Push to tradeCGT after download", value=bool(_cgt_key),
                             disabled=st.session_state.dl_running)
-    cgt_token_dl = ""
-    if also_push:
-        cgt_token_dl = st.text_input(
-            "tradeCGT API Key",
-            value=_saved_cgt_key,
-            type="default",
-            key="cgt_dl",
-            disabled=st.session_state.dl_running,
-        )
+    if also_push and not _cgt_key:
+        st.warning("No tradeCGT API key found — add one in the ⚙️ Config tab to enable pushing.")
 
     with st.expander("Advanced options"):
         to_date = st.date_input(
@@ -438,13 +431,10 @@ with tab_dl:
         if account_filter:
             args += ["--account", account_filter]
         args += ["--to-date", to_date.isoformat()]
-        env_extra = {}
-        if also_push:
+        if also_push and _cgt_key:
             args += ["--push"]
-            if cgt_token_dl:
-                env_extra["CGT_TOKEN"] = cgt_token_dl
         st.session_state.dl_args = args
-        st.session_state.dl_env = env_extra
+        st.session_state.dl_env = {}
         st.session_state.dl_running = True
         st.rerun()
 
@@ -483,27 +473,21 @@ with tab_push:
                 _push_acct_map[f"{_a.get('name', _a['id'])} ({_a['id']})"] = _a["id"]
                 _seen_ids.add(_a["id"])
 
-    col_token2, col_acct2 = st.columns([3, 2])
-    with col_token2:
-        cgt_token = st.text_input(
-            "tradeCGT API Key",
-            value=config.get("cgt", {}).get("api_key", ""),
-            type="default",
-            key="cgt_push",
-            disabled=st.session_state.push_running,
-        )
-    with col_acct2:
-        _push_acct_sel = st.selectbox("Account", list(_push_acct_map.keys()),
-                                      key="acct_push",
-                                      disabled=st.session_state.push_running)
-        account_filter_push = _push_acct_map[_push_acct_sel]
+    _push_cgt_key = config.get("cgt", {}).get("api_key", "")
+    if not _push_cgt_key:
+        st.warning("No tradeCGT API key found — add one in the ⚙️ Config tab.")
+
+    _push_acct_sel = st.selectbox("Account", list(_push_acct_map.keys()),
+                                  key="acct_push",
+                                  disabled=st.session_state.push_running)
+    account_filter_push = _push_acct_map[_push_acct_sel]
 
     if st.button("▶ Push", type="primary",
-                 disabled=not cgt_token or st.session_state.push_running):
+                 disabled=not _push_cgt_key or st.session_state.push_running):
         st.session_state.push_args = ["--push-only"]
         if account_filter_push:
             st.session_state.push_args += ["--account", account_filter_push]
-        st.session_state.push_env = {"CGT_TOKEN": cgt_token}
+        st.session_state.push_env = {}
         st.session_state.push_running = True
         st.rerun()
 
