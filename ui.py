@@ -58,6 +58,71 @@ def run_and_stream(args, env_extra=None):
     return proc.returncode == 0, "".join(lines)
 
 
+# ── Bookmarklet JS (shared between onboarding and the Bookmarklet tab) ────────
+
+BM_JS = (
+    "javascript:(function(){"
+    "function notify(msg,bg){"
+    "var d=document.createElement('div');"
+    "d.textContent=msg;"
+    "d.style.cssText='position:fixed;top:20px;right:20px;background:'+bg+';color:#fff;"
+    "padding:12px 20px;border-radius:8px;font-family:sans-serif;font-size:14px;"
+    "font-weight:700;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.3)';"
+    "document.body.appendChild(d);setTimeout(function(){d.remove()},3000);}"
+    "function capture(token){"
+    "navigator.clipboard.writeText(token)"
+    ".then(function(){notify('\\u2713 II token copied to clipboard!','#22c55e');})"
+    ".catch(function(){window.prompt('Copy this token:',token);});}"
+    "var _f=window.fetch;"
+    "window.fetch=function(r,i){"
+    "var res=_f.apply(this,arguments);"
+    "try{"
+    "var url=(r instanceof Request)?r.url:r;"
+    "if(url&&url.includes('api-prod.ii.co.uk')){"
+    "var auth=null;"
+    "if(r instanceof Request)auth=r.headers.get('Authorization');"
+    "else if(i&&i.headers){"
+    "if(i.headers instanceof Headers)auth=i.headers.get('Authorization');"
+    "else auth=i.headers['Authorization']||i.headers['authorization'];}"
+    "if(auth&&auth.startsWith('Bearer '))capture(auth.substring(7));}}"
+    "catch(e){}return res;};"
+    "var _o=XMLHttpRequest.prototype.open;"
+    "var _s=XMLHttpRequest.prototype.setRequestHeader;"
+    "XMLHttpRequest.prototype.open=function(m,url){"
+    "this._iiurl=url;return _o.apply(this,arguments);};"
+    "XMLHttpRequest.prototype.setRequestHeader=function(h,v){"
+    "if(this._iiurl&&this._iiurl.includes('api-prod.ii.co.uk')"
+    "&&h.toLowerCase()==='authorization'&&v.startsWith('Bearer '))"
+    "capture(v.substring(7));"
+    "return _s.apply(this,arguments);};"
+    "notify('\\u23f3 Waiting for II API request...','#3b82f6');"
+    "})();"
+)
+
+
+def render_bookmarklet_button():
+    """Render the draggable bookmarklet button."""
+    st.components.v1.html(
+        f"""
+        <div style="margin:16px 0 8px;">
+          <a href="{BM_JS}"
+             style="display:inline-block;background:#3b82f6;color:white;
+                    padding:12px 28px;border-radius:8px;text-decoration:none;
+                    font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+                    font-size:15px;font-weight:600;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.18);cursor:grab;"
+             onclick="alert('Drag this button to your bookmarks bar — don\\'t click it on this page!');return false;">
+            🔖 Get II Token
+          </a>
+          <span style="margin-left:14px;font-family:sans-serif;font-size:13px;color:#6b7280;">
+            ← drag to your bookmarks bar
+          </span>
+        </div>
+        """,
+        height=70,
+    )
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 config = load_config()
@@ -212,12 +277,55 @@ def show_onboarding():
             with open(CONFIG_FILE, "w") as f:
                 yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             del st.session_state.wiz_cfg
-            st.success("✓ Config created — loading the app…")
+            st.session_state["wiz_step"] = 2
             st.rerun()
+
+
+def show_bookmarklet_step():
+    """Step 2 of onboarding: explain and set up the bookmarklet."""
+    st.title("📊 One last thing — getting your token")
+    st.success("✓ Config saved! You're nearly ready.")
+
+    st.markdown("""
+When you download from Interactive Investor, the app needs to prove it's really you.
+II does this with a short-lived access code — called a **bearer token** — that it issues
+when you log in. It's a bit like a temporary visitor pass: valid for about 30 minutes,
+then it expires and you need a fresh one.
+
+Getting this code manually means digging through browser developer tools, which isn't fun.
+The **Get II Token** bookmarklet is a one-click shortcut that handles it for you:
+
+- **Save it once** — drag the button below to your browser's bookmarks bar
+- **Use it each time** — click it while you're on ii.co.uk, navigate anywhere on the site,
+  and it quietly copies your token to the clipboard the moment it spots it
+- **Paste and go** — come back here and paste it into the token field in the Download tab
+
+Nothing is sent anywhere. The token never leaves your browser.
+""")
+
+    st.info(
+        "**To show your bookmarks bar:** "
+        "**Mac** — ⌘ Cmd + Shift + B  ·  "
+        "**Windows/Linux** — Ctrl + Shift + B"
+    )
+
+    render_bookmarklet_button()
+
+    st.divider()
+
+    if st.button("✓ Done — take me to the app", type="primary"):
+        st.session_state.pop("wiz_step", None)
+        st.rerun()
+
+    st.caption("You can always find this button again in the 🔖 Bookmarklet tab.")
 
 
 if not config:
     show_onboarding()
+    st.stop()
+
+if st.session_state.get("wiz_step") == 2:
+    show_bookmarklet_step()
     st.stop()
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -551,65 +659,7 @@ no digging through DevTools required.
 5. Come back here and paste into the token field above
 """)
 
-    # Bookmarklet JS — intercepts both fetch and XHR
-    bm_js = (
-        "javascript:(function(){"
-        "function notify(msg,bg){"
-        "var d=document.createElement('div');"
-        "d.textContent=msg;"
-        "d.style.cssText='position:fixed;top:20px;right:20px;background:'+bg+';color:#fff;"
-        "padding:12px 20px;border-radius:8px;font-family:sans-serif;font-size:14px;"
-        "font-weight:700;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.3)';"
-        "document.body.appendChild(d);setTimeout(function(){d.remove()},3000);}"
-        "function capture(token){"
-        "navigator.clipboard.writeText(token)"
-        ".then(function(){notify('\\u2713 II token copied to clipboard!','#22c55e');})"
-        ".catch(function(){window.prompt('Copy this token:',token);});}"
-        "var _f=window.fetch;"
-        "window.fetch=function(r,i){"
-        "var res=_f.apply(this,arguments);"
-        "try{"
-        "var url=(r instanceof Request)?r.url:r;"
-        "if(url&&url.includes('api-prod.ii.co.uk')){"
-        "var auth=null;"
-        "if(r instanceof Request)auth=r.headers.get('Authorization');"
-        "else if(i&&i.headers){"
-        "if(i.headers instanceof Headers)auth=i.headers.get('Authorization');"
-        "else auth=i.headers['Authorization']||i.headers['authorization'];}"
-        "if(auth&&auth.startsWith('Bearer '))capture(auth.substring(7));}}"
-        "catch(e){}return res;};"
-        "var _o=XMLHttpRequest.prototype.open;"
-        "var _s=XMLHttpRequest.prototype.setRequestHeader;"
-        "XMLHttpRequest.prototype.open=function(m,url){"
-        "this._iiurl=url;return _o.apply(this,arguments);};"
-        "XMLHttpRequest.prototype.setRequestHeader=function(h,v){"
-        "if(this._iiurl&&this._iiurl.includes('api-prod.ii.co.uk')"
-        "&&h.toLowerCase()==='authorization'&&v.startsWith('Bearer '))"
-        "capture(v.substring(7));"
-        "return _s.apply(this,arguments);};"
-        "notify('\\u23f3 Waiting for II API request...','#3b82f6');"
-        "})();"
-    )
-
-    st.components.v1.html(
-        f"""
-        <div style="margin:16px 0 8px;">
-          <a href="{bm_js}"
-             style="display:inline-block;background:#3b82f6;color:white;
-                    padding:12px 28px;border-radius:8px;text-decoration:none;
-                    font-family:-apple-system,BlinkMacSystemFont,sans-serif;
-                    font-size:15px;font-weight:600;
-                    box-shadow:0 2px 8px rgba(0,0,0,0.18);cursor:grab;"
-             onclick="alert('Drag this button to your bookmarks bar — don\\'t click it on this page!');return false;">
-            🔖 Get II Token
-          </a>
-          <span style="margin-left:14px;font-family:sans-serif;font-size:13px;color:#6b7280;">
-            ← drag to your bookmarks bar
-          </span>
-        </div>
-        """,
-        height=70,
-    )
+    render_bookmarklet_button()
 
     with st.expander("View bookmarklet source"):
-        st.code(bm_js, language="javascript")
+        st.code(BM_JS, language="javascript")
