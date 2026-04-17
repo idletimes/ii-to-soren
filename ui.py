@@ -61,20 +61,10 @@ def run_and_stream(args, env_extra=None):
 
 config = load_config()
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.title("📊 II Downloader")
-    st.divider()
-    if config:
-        st.success("✓ config.yaml loaded")
-        for u in config.get("users", []):
-            accts = u.get("accounts", [])
-            st.caption(f"**{u['email']}**  \n{len(accts)} account{'s' if len(accts) != 1 else ''}")
-    else:
-        st.error("config.yaml not found")
-        st.info("Copy config.example.yaml → config.yaml and fill in your details.")
-        st.stop()
+if not config:
+    st.error("config.yaml not found")
+    st.info("Copy config.example.yaml → config.yaml and fill in your details.")
+    st.stop()
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
@@ -91,6 +81,7 @@ tab_dl, tab_push, tab_cfg, tab_bm = st.tabs(["📥 Download", "📤 Push to trad
 # ─── Download ─────────────────────────────────────────────────────────────────
 
 with tab_dl:
+    st.title("📊 II Downloader")
     st.header("Download from Interactive Investor")
 
     users = config.get("users", [])
@@ -113,6 +104,17 @@ with tab_dl:
     account_filter = col_acct.text_input("Account ID (optional)", placeholder="e.g. 0970887",
                                          disabled=st.session_state.dl_running)
 
+    also_push = st.checkbox("Push to tradeCGT after download", value=True,
+                            disabled=st.session_state.dl_running)
+    cgt_token_dl = ""
+    if also_push:
+        cgt_token_dl = st.text_input(
+            "tradeCGT Bearer Token",
+            type="default",
+            key="cgt_dl",
+            disabled=st.session_state.dl_running,
+        )
+
     with st.expander("Advanced options"):
         to_date = st.date_input(
             "Transaction end date",
@@ -120,19 +122,12 @@ with tab_dl:
             help="Defaults to yesterday to avoid partial-day issues",
             disabled=st.session_state.dl_running,
         )
-        also_push = st.checkbox("Push to tradeCGT immediately after download",
-                                disabled=st.session_state.dl_running)
-        cgt_token_dl = ""
-        if also_push:
-            cgt_token_dl = st.text_input(
-                "tradeCGT Bearer Token",
-                type="default",
-                key="cgt_dl",
-                disabled=st.session_state.dl_running,
-            )
 
     if st.button("▶ Run Download", type="primary",
-                 disabled=not ii_token or st.session_state.dl_running):
+                 disabled=st.session_state.dl_running):
+        if not ii_token:
+            st.error("Please paste an II bearer token before running.")
+            st.stop()
         args = ["--user", selected_user, "--token", ii_token]
         if do_portfolio and not do_transactions:
             args += ["--portfolio"]
