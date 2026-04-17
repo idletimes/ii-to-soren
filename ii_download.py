@@ -573,6 +573,7 @@ def push_to_cgt(config, account_filter=None, debug=False):
     print(colour(f"\n{'='*60}", BOLD))
     print(colour(" Push Summary", BOLD))
     print(colour(f"{'='*60}", BOLD))
+    had_errors = False
     for dtype, label, status in summary:
         if status == "pushed":
             icon = colour("OK  ", GREEN)
@@ -582,7 +583,11 @@ def push_to_cgt(config, account_filter=None, debug=False):
             icon = colour("DEL ", YELLOW)
         else:
             icon = colour("FAIL", RED)
+            had_errors = True
         print(f"  [{icon}] {dtype}: {label}")
+
+    if had_errors:
+        sys.exit(1)
 
 
 def resolve_users(config, user_filter):
@@ -699,9 +704,14 @@ def main():
             icon = colour("FAIL", RED)
         print(f"    [{icon}] {dtype}: {label}")
 
+    had_errors = any(s == "error" for _, _, _, s in summary)
+
     # Push to tradeCGT if requested
     if args.push:
         push_to_cgt(config, args.account, debug=args.debug)
+
+    if had_errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
