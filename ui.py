@@ -154,6 +154,10 @@ def show_onboarding():
                           value=int(cfg["ii_request_delay"]["max"]), key="wiz_dmax")
         col3.text_input("tradeCGT API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
 
+    # Render validation errors from previous submit attempt (above the button)
+    for err in st.session_state.get("wiz_errors", []):
+        st.error(err)
+
     st.divider()
 
     if st.button("✓ Create Config", type="primary"):
@@ -179,9 +183,9 @@ def show_onboarding():
                 if not acct["currencies"]:
                     errors.append(f"**{label} / {alabel}**: select at least one currency")
 
+        st.session_state["wiz_errors"] = errors
         if errors:
-            for err in errors:
-                st.error(err)
+            st.rerun()
         else:
             with open(CONFIG_FILE, "w") as f:
                 yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
