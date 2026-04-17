@@ -127,7 +127,7 @@ def show_onboarding():
                                   key=f"wu{i}_a{j}_id")
                 col_d.text_input("Start Date", value=acct["start_date"],
                                  placeholder="YYYY-MM-DD",
-                                 help="Earliest date to pull transactions from",
+                                 help="Earliest date to pull transactions from. It doesn't matter if you set this too early, but try not to set it too late.",
                                  key=f"wu{i}_a{j}_start")
                 col_cur.multiselect("Currencies", CURRENCIES,
                                     default=acct["currencies"], key=f"wu{i}_a{j}_cur")
@@ -426,6 +426,7 @@ with tab_cfg:
                     col_d.text_input(
                         "Start date", value=acct.get("start_date", ""),
                         placeholder="YYYY-MM-DD", key=f"u{i}_a{j}_start",
+                        help="Earliest date to pull transactions from. It doesn't matter if you set this too early, but try not to set it too late.",
                     )
                     col_cur.multiselect(
                         "Currencies", CURRENCIES,
