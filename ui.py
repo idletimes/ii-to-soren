@@ -401,10 +401,14 @@ with tab_dl:
 
     _cgt_key = config.get("cgt", {}).get("api_key", "")
 
-    also_push = st.checkbox("Push to tradeCGT after download", value=bool(_cgt_key),
-                            disabled=st.session_state.dl_running)
-    if also_push and not _cgt_key:
-        st.warning("No tradeCGT API key found — add one in the ⚙️ Config tab to enable pushing.")
+    also_push = st.checkbox(
+        "Push to tradeCGT after download",
+        value=bool(_cgt_key),
+        disabled=st.session_state.dl_running or not _cgt_key,
+        help=None if _cgt_key else "Add a tradeCGT API key in ⚙️ Config to enable this",
+    )
+    if not _cgt_key:
+        st.info("💡 Add a tradeCGT API key in the **⚙️ Config** tab to enable pushing after download.")
 
     with st.expander("Advanced options"):
         to_date = st.date_input(
@@ -475,7 +479,7 @@ with tab_push:
 
     _push_cgt_key = config.get("cgt", {}).get("api_key", "")
     if not _push_cgt_key:
-        st.warning("No tradeCGT API key found — add one in the ⚙️ Config tab.")
+        st.info("💡 Add a tradeCGT API key in the **⚙️ Config** tab to enable pushing.")
 
     _push_acct_sel = st.selectbox("Account", list(_push_acct_map.keys()),
                                   key="acct_push",
