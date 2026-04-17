@@ -277,11 +277,15 @@ with tab_dl:
             disabled=st.session_state.dl_running,
         )
 
+    if st.session_state.get("dl_error"):
+        st.error(st.session_state.dl_error)
+        st.session_state.dl_error = ""
+
     if st.button("▶ Run Download", type="primary",
                  disabled=st.session_state.dl_running):
         if not ii_token:
-            st.error("Please paste an II bearer token before running.")
-            st.stop()
+            st.session_state.dl_error = "Please paste an II bearer token before running."
+            st.rerun()
         args = ["--user", selected_user, "--token", ii_token]
         if do_portfolio and not do_transactions:
             args += ["--portfolio"]
