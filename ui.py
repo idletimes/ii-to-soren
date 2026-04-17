@@ -61,6 +61,27 @@ def run_and_stream(args, env_extra=None):
 
 config = load_config()
 
+# Disable browser autofill on all text inputs (Streamlit exposes no autocomplete param).
+# The MutationObserver re-applies it after every Streamlit rerun that swaps DOM nodes.
+st.components.v1.html("""
+<script>
+(function () {
+    function patch() {
+        try {
+            window.parent.document.querySelectorAll('input').forEach(function (el) {
+                el.setAttribute('autocomplete', 'off');
+            });
+        } catch (e) {}
+    }
+    patch();
+    var obs = new MutationObserver(patch);
+    try {
+        obs.observe(window.parent.document.body, { childList: true, subtree: true });
+    } catch (e) {}
+})();
+</script>
+""", height=0)
+
 
 def show_onboarding():
     """Full-page first-time setup wizard shown when config.yaml doesn't exist."""
