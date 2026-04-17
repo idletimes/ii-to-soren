@@ -34,7 +34,8 @@ def strip_ansi(text):
 
 
 def run_and_stream(args, env_extra=None):
-    """Run ii_download.py, streaming output into a st.code block. Returns True on success."""
+    """Run ii_download.py, streaming output into a st.code block.
+    Returns (success: bool, log: str)."""
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
@@ -54,7 +55,7 @@ def run_and_stream(args, env_extra=None):
         lines.append(strip_ansi(line))
         output_box.code("".join(lines), language=None)
     proc.wait()
-    return proc.returncode == 0
+    return proc.returncode == 0, "".join(lines)
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -221,8 +222,12 @@ if not config:
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
-for _key, _default in [("dl_running", False), ("dl_args", []), ("dl_env", {}),
-                        ("push_running", False), ("push_args", []), ("push_env", {})]:
+for _key, _default in [
+    ("dl_running", False), ("dl_args", []), ("dl_env", {}),
+    ("dl_last_ok", None), ("dl_last_log", ""),
+    ("push_running", False), ("push_args", []), ("push_env", {}),
+    ("push_last_ok", None), ("push_last_log", ""),
+]:
     if _key not in st.session_state:
         st.session_state[_key] = _default
 
@@ -327,13 +332,23 @@ with tab_dl:
 
     if st.session_state.dl_running:
         with st.status("Downloading from Interactive Investor…", expanded=True) as status:
-            ok = run_and_stream(st.session_state.dl_args, st.session_state.dl_env)
+            ok, log = run_and_stream(st.session_state.dl_args, st.session_state.dl_env)
             status.update(
                 label="Download complete ✓" if ok else "Download failed ✗",
                 state="complete" if ok else "error",
             )
         st.session_state.dl_running = False
+        st.session_state.dl_last_ok = ok
+        st.session_state.dl_last_log = log
         st.rerun()
+
+    if st.session_state.dl_last_ok is not None:
+        if st.session_state.dl_last_ok:
+            st.success("✓ Download completed successfully")
+        else:
+            st.error("✗ Download failed — see logs below")
+        with st.expander("View logs"):
+            st.code(st.session_state.dl_last_log, language=None)
 
 
 # ─── Push ─────────────────────────────────────────────────────────────────────
@@ -375,13 +390,23 @@ with tab_push:
 
     if st.session_state.push_running:
         with st.status("Pushing to tradeCGT…", expanded=True) as status:
-            ok = run_and_stream(st.session_state.push_args, st.session_state.push_env)
+            ok, log = run_and_stream(st.session_state.push_args, st.session_state.push_env)
             status.update(
                 label="Push complete ✓" if ok else "Push failed ✗",
                 state="complete" if ok else "error",
             )
         st.session_state.push_running = False
+        st.session_state.push_last_ok = ok
+        st.session_state.push_last_log = log
         st.rerun()
+
+    if st.session_state.push_last_ok is not None:
+        if st.session_state.push_last_ok:
+            st.success("✓ Push completed successfully")
+        else:
+            st.error("✗ Push failed — see logs below")
+        with st.expander("View logs"):
+            st.code(st.session_state.push_last_log, language=None)
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────
