@@ -87,16 +87,31 @@ with tab_dl:
     users = config.get("users", [])
     user_emails = [u["email"] for u in users]
 
-    col_token, col_user = st.columns([3, 2])
+    # Per-user token memory (session only — never written to config)
+    if "ii_tokens" not in st.session_state:
+        st.session_state.ii_tokens = {}
+
+    col_user, col_token = st.columns([2, 3])
+    with col_user:
+        selected_user = st.selectbox("User", user_emails, key="selected_user",
+                                     disabled=st.session_state.dl_running)
+
+    # When the user selection changes, load that user's stored token
+    if st.session_state.get("_prev_user") != selected_user:
+        st.session_state["ii_token_input"] = st.session_state.ii_tokens.get(selected_user, "")
+        st.session_state["_prev_user"] = selected_user
+
+    def _save_token():
+        st.session_state.ii_tokens[st.session_state.selected_user] = st.session_state["ii_token_input"]
+
     with col_token:
         ii_token = st.text_input(
             "II Bearer Token",
-            type="default",
-            placeholder="Paste your token here — use the 🔖 Bookmarklet tab to get it",
+            key="ii_token_input",
+            on_change=_save_token,
+            placeholder="Paste your token — use the 🔖 Bookmarklet tab to get it",
             disabled=st.session_state.dl_running,
         )
-    with col_user:
-        selected_user = st.selectbox("User", user_emails, disabled=st.session_state.dl_running)
 
     col_port, col_tx, col_acct = st.columns(3)
     do_portfolio = col_port.checkbox("Portfolio & Cash", value=True, disabled=st.session_state.dl_running)
