@@ -61,9 +61,147 @@ def run_and_stream(args, env_extra=None):
 
 config = load_config()
 
+
+def show_onboarding():
+    """Full-page first-time setup wizard shown when config.yaml doesn't exist."""
+
+    CURRENCIES = ["AUD", "CAD", "CHF", "DKK", "EUR", "GBP", "HKD", "JPY", "NOK", "SEK", "SGD", "USD"]
+
+    st.title("📊 Welcome to II Downloader")
+    st.info(
+        "👋 No config file found yet — let's create one. "
+        "Fill in your details below and click **Create Config** to get started."
+    )
+
+    if "wiz_cfg" not in st.session_state:
+        st.session_state.wiz_cfg = {
+            "ii_request_delay": {"min": 1, "max": 3},
+            "cgt": {"api_url": "http://localhost:8000"},
+            "users": [{"email": "", "customer_id": "", "accounts": [
+                {"id": "", "name": "", "start_date": "2024-01-01", "currencies": ["GBP"]}
+            ]}],
+        }
+
+    cfg = st.session_state.wiz_cfg
+
+    def wiz_sync():
+        """Flush current widget values back into wiz_cfg before structural changes."""
+        for i, user in enumerate(cfg["users"]):
+            user["email"] = st.session_state.get(f"wu{i}_email", user["email"])
+            user["customer_id"] = st.session_state.get(f"wu{i}_cid", user["customer_id"])
+            for j, acct in enumerate(user["accounts"]):
+                acct["name"] = st.session_state.get(f"wu{i}_a{j}_name", acct["name"])
+                acct["id"] = st.session_state.get(f"wu{i}_a{j}_id", acct["id"])
+                acct["start_date"] = st.session_state.get(f"wu{i}_a{j}_start", acct["start_date"])
+                acct["currencies"] = st.session_state.get(f"wu{i}_a{j}_cur", acct["currencies"])
+
+    # ── Users ─────────────────────────────────────────────────────────────────
+    st.subheader("Your Interactive Investor Accounts")
+    st.caption(
+        "Add each II login you want to include. "
+        "Your customer number is the 11-digit number visible in the URL when logged in to ii.co.uk."
+    )
+
+    for i, user in enumerate(cfg["users"]):
+        with st.container(border=True):
+            col_e, col_c, col_del = st.columns([3, 2, 1])
+            col_e.text_input("II Login Email", value=user["email"],
+                             placeholder="you@example.com", key=f"wu{i}_email")
+            col_c.text_input("Customer Number", value=user["customer_id"],
+                             placeholder="04550560000",
+                             help="11-digit number from your II account URL",
+                             key=f"wu{i}_cid")
+            if len(cfg["users"]) > 1 and col_del.button("Remove", key=f"wiz_del_user_{i}"):
+                wiz_sync()
+                cfg["users"].pop(i)
+                st.rerun()
+
+            st.caption("**Accounts**")
+            for j, acct in enumerate(user["accounts"]):
+                col_n, col_id, col_d, col_cur, col_a = st.columns([2, 2, 2, 4, 1])
+                col_n.text_input("Name", value=acct["name"],
+                                 placeholder="ISA", key=f"wu{i}_a{j}_name")
+                col_id.text_input("Account ID", value=acct["id"],
+                                  placeholder="1234567",
+                                  help="7-digit account number from ii.co.uk",
+                                  key=f"wu{i}_a{j}_id")
+                col_d.text_input("Start Date", value=acct["start_date"],
+                                 placeholder="YYYY-MM-DD",
+                                 help="Earliest date to pull transactions from",
+                                 key=f"wu{i}_a{j}_start")
+                col_cur.multiselect("Currencies", CURRENCIES,
+                                    default=acct["currencies"], key=f"wu{i}_a{j}_cur")
+                col_a.markdown("<br>", unsafe_allow_html=True)
+                if len(user["accounts"]) > 1 and col_a.button("🗑", key=f"wiz_del_acct_{i}_{j}",
+                                                               help="Remove account"):
+                    wiz_sync()
+                    user["accounts"].pop(j)
+                    st.rerun()
+
+            if st.button("＋ Add Account", key=f"wiz_add_acct_{i}"):
+                wiz_sync()
+                user["accounts"].append({"id": "", "name": "",
+                                         "start_date": str(date.today()),
+                                         "currencies": ["GBP"]})
+                st.rerun()
+
+    if st.button("＋ Add another II login"):
+        wiz_sync()
+        cfg["users"].append({"email": "", "customer_id": "", "accounts": [
+            {"id": "", "name": "", "start_date": str(date.today()), "currencies": ["GBP"]}
+        ]})
+        st.rerun()
+
+    # ── Global settings (collapsed by default — defaults are fine for most) ───
+    with st.expander("⚙️ Advanced Settings"):
+        st.caption("The defaults work for most setups — only change these if needed.")
+        col1, col2, col3 = st.columns([1, 1, 3])
+        col1.number_input("Request delay min (s)", min_value=0, max_value=60,
+                          value=int(cfg["ii_request_delay"]["min"]), key="wiz_dmin")
+        col2.number_input("Request delay max (s)", min_value=0, max_value=60,
+                          value=int(cfg["ii_request_delay"]["max"]), key="wiz_dmax")
+        col3.text_input("tradeCGT API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
+
+    st.divider()
+
+    if st.button("✓ Create Config", type="primary"):
+        wiz_sync()
+
+        # Pull advanced settings
+        cfg["ii_request_delay"]["min"] = st.session_state.get("wiz_dmin", 1)
+        cfg["ii_request_delay"]["max"] = st.session_state.get("wiz_dmax", 3)
+        cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "http://localhost:8000")
+
+        # Validate
+        errors = []
+        for i, user in enumerate(cfg["users"]):
+            label = user["email"] or f"User {i + 1}"
+            if not user["email"]:
+                errors.append(f"**{label}**: email is required")
+            if not user["customer_id"]:
+                errors.append(f"**{label}**: customer number is required")
+            for j, acct in enumerate(user["accounts"]):
+                alabel = acct["name"] or f"Account {j + 1}"
+                if not acct["id"]:
+                    errors.append(f"**{label} / {alabel}**: account ID is required")
+                if not acct["start_date"]:
+                    errors.append(f"**{label} / {alabel}**: start date is required")
+                if not acct["currencies"]:
+                    errors.append(f"**{label} / {alabel}**: select at least one currency")
+
+        if errors:
+            for err in errors:
+                st.error(err)
+        else:
+            with open(CONFIG_FILE, "w") as f:
+                yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            del st.session_state.wiz_cfg
+            st.success("✓ Config created — loading the app…")
+            st.rerun()
+
+
 if not config:
-    st.error("config.yaml not found")
-    st.info("Copy config.example.yaml → config.yaml and fill in your details.")
+    show_onboarding()
     st.stop()
 
 # ── Session state ─────────────────────────────────────────────────────────────
