@@ -245,11 +245,18 @@ with tab_dl:
             disabled=st.session_state.dl_running,
         )
 
+    # Account dropdown — options from the selected user's config
+    _sel_user_obj = next((u for u in users if u["email"] == selected_user), None)
+    _user_accounts = _sel_user_obj.get("accounts", []) if _sel_user_obj else []
+    _dl_acct_map = {"All": None}
+    _dl_acct_map.update({f"{a.get('name', a['id'])} ({a['id']})": a["id"] for a in _user_accounts})
+
     col_port, col_tx, col_acct = st.columns(3)
     do_portfolio = col_port.checkbox("Portfolio & Cash", value=True, disabled=st.session_state.dl_running)
     do_transactions = col_tx.checkbox("Transactions", value=True, disabled=st.session_state.dl_running)
-    account_filter = col_acct.text_input("Account ID (optional)", placeholder="e.g. 0970887",
-                                         disabled=st.session_state.dl_running)
+    _dl_acct_sel = col_acct.selectbox("Account", list(_dl_acct_map.keys()),
+                                      disabled=st.session_state.dl_running)
+    account_filter = _dl_acct_map[_dl_acct_sel]
 
     also_push = st.checkbox("Push to tradeCGT after download", value=True,
                             disabled=st.session_state.dl_running)
@@ -309,6 +316,15 @@ with tab_dl:
 with tab_push:
     st.header("Push to tradeCGT")
 
+    # Account dropdown — options from all users in config (deduped by ID)
+    _push_acct_map = {"All": None}
+    _seen_ids: set = set()
+    for _u in config.get("users", []):
+        for _a in _u.get("accounts", []):
+            if _a["id"] not in _seen_ids:
+                _push_acct_map[f"{_a.get('name', _a['id'])} ({_a['id']})"] = _a["id"]
+                _seen_ids.add(_a["id"])
+
     col_token2, col_acct2 = st.columns([3, 2])
     with col_token2:
         cgt_token = st.text_input(
@@ -318,12 +334,10 @@ with tab_push:
             disabled=st.session_state.push_running,
         )
     with col_acct2:
-        account_filter_push = st.text_input(
-            "Account ID (optional)",
-            placeholder="e.g. 0970887",
-            key="acct_push",
-            disabled=st.session_state.push_running,
-        )
+        _push_acct_sel = st.selectbox("Account", list(_push_acct_map.keys()),
+                                      key="acct_push",
+                                      disabled=st.session_state.push_running)
+        account_filter_push = _push_acct_map[_push_acct_sel]
 
     if st.button("▶ Push", type="primary",
                  disabled=not cgt_token or st.session_state.push_running):
