@@ -77,7 +77,7 @@ def show_onboarding():
         st.session_state.wiz_cfg = {
             "ii_request_delay": {"min": 1, "max": 3},
             "cgt": {"api_url": "http://localhost:8000"},
-            "users": [{"email": "", "customer_id": "", "accounts": [
+            "users": [{"email": "", "accounts": [
                 {"id": "", "name": "", "start_date": "2024-01-01", "currencies": ["GBP"]}
             ]}],
         }
@@ -88,7 +88,6 @@ def show_onboarding():
         """Flush current widget values back into wiz_cfg before structural changes."""
         for i, user in enumerate(cfg["users"]):
             user["email"] = st.session_state.get(f"wu{i}_email", user["email"])
-            user["customer_id"] = st.session_state.get(f"wu{i}_cid", user["customer_id"])
             for j, acct in enumerate(user["accounts"]):
                 acct["name"] = st.session_state.get(f"wu{i}_a{j}_name", acct["name"])
                 acct["id"] = st.session_state.get(f"wu{i}_a{j}_id", acct["id"])
@@ -97,20 +96,13 @@ def show_onboarding():
 
     # ── Users ─────────────────────────────────────────────────────────────────
     st.subheader("Your Interactive Investor Accounts")
-    st.caption(
-        "Add each II login you want to include. "
-        "Your customer number is the 11-digit number visible in the URL when logged in to ii.co.uk."
-    )
+    st.caption("Add each II login you want to include.")
 
     for i, user in enumerate(cfg["users"]):
         with st.container(border=True):
-            col_e, col_c, col_del = st.columns([3, 2, 1])
+            col_e, col_del = st.columns([4, 1])
             col_e.text_input("II Login Email", value=user["email"],
                              placeholder="you@example.com", key=f"wu{i}_email")
-            col_c.text_input("Customer Number", value=user["customer_id"],
-                             placeholder="04550560000",
-                             help="11-digit number from your II account URL",
-                             key=f"wu{i}_cid")
             if len(cfg["users"]) > 1 and col_del.button("Remove", key=f"wiz_del_user_{i}"):
                 wiz_sync()
                 cfg["users"].pop(i)
@@ -147,7 +139,7 @@ def show_onboarding():
 
     if st.button("＋ Add another II login"):
         wiz_sync()
-        cfg["users"].append({"email": "", "customer_id": "", "accounts": [
+        cfg["users"].append({"email": "", "accounts": [
             {"id": "", "name": "", "start_date": str(date.today()), "currencies": ["GBP"]}
         ]})
         st.rerun()
@@ -178,8 +170,6 @@ def show_onboarding():
             label = user["email"] or f"User {i + 1}"
             if not user["email"]:
                 errors.append(f"**{label}**: email is required")
-            if not user["customer_id"]:
-                errors.append(f"**{label}**: customer number is required")
             for j, acct in enumerate(user["accounts"]):
                 alabel = acct["name"] or f"Account {j + 1}"
                 if not acct["id"]:
@@ -364,7 +354,6 @@ def sync_form_to_cfg():
     cfg.setdefault("cgt", {})["api_url"] = st.session_state.get("cfg_cgt_url", "")
     for i, user in enumerate(cfg.get("users", [])):
         user["email"] = st.session_state.get(f"u{i}_email", user.get("email", ""))
-        user["customer_id"] = st.session_state.get(f"u{i}_cid", user.get("customer_id", ""))
         for j, acct in enumerate(user.get("accounts", [])):
             acct["name"] = st.session_state.get(f"u{i}_a{j}_name", acct.get("name", ""))
             acct["id"] = st.session_state.get(f"u{i}_a{j}_id", acct.get("id", ""))
@@ -404,9 +393,8 @@ with tab_cfg:
 
     for i, user in enumerate(cfg.get("users", [])):
         with st.expander(f"👤  {user.get('email', 'New User')}", expanded=True):
-            col_e, col_c, col_del = st.columns([3, 2, 1])
+            col_e, col_del = st.columns([4, 1])
             col_e.text_input("Email", value=user.get("email", ""), key=f"u{i}_email")
-            col_c.text_input("Customer ID", value=user.get("customer_id", ""), key=f"u{i}_cid")
             if col_del.button("🗑 Remove user", key=f"del_user_{i}"):
                 sync_form_to_cfg()
                 cfg["users"].pop(i)
@@ -450,7 +438,7 @@ with tab_cfg:
 
     if st.button("＋ Add User"):
         sync_form_to_cfg()
-        cfg["users"].append({"email": "", "customer_id": "", "accounts": []})
+        cfg["users"].append({"email": "", "accounts": []})
         st.rerun()
 
     st.divider()

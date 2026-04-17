@@ -43,15 +43,31 @@ def load_config(path=CONFIG_FILE):
         return yaml.safe_load(f)
 
 
-def decode_jwt_exp(token):
-    """Decode JWT expiry without verification."""
+def decode_jwt_payload(token):
+    """Decode JWT payload without verification. Returns dict or None."""
     try:
         payload = token.split(".")[1]
         payload += "=" * (4 - len(payload) % 4)
-        data = json.loads(base64.urlsafe_b64decode(payload))
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return None
+
+
+def decode_jwt_exp(token):
+    """Decode JWT expiry without verification."""
+    data = decode_jwt_payload(token)
+    try:
         return datetime.fromtimestamp(data["exp"])
     except Exception:
         return None
+
+
+def decode_jwt_customer_id(token):
+    """Extract II customer ID from JWT (https://onestack.co.uk/cid claim)."""
+    data = decode_jwt_payload(token)
+    if data:
+        return data.get("https://onestack.co.uk/cid")
+    return None
 
 
 def get_token(email, token_arg=None):
@@ -577,12 +593,12 @@ def resolve_users(config, user_filter):
         sys.exit(1)
 
     if user_filter:
-        matched = [u for u in users if user_filter in u["email"] or user_filter == u["customer_id"]]
+        matched = [u for u in users if user_filter in u["email"]]
         if not matched:
             print(colour(f"No user matching '{user_filter}' in config.", RED))
             print("Available users:")
             for u in users:
-                print(f"  {u['email']} ({u['customer_id']})")
+                print(f"  {u['email']}")
             sys.exit(1)
         return matched
 
@@ -625,11 +641,10 @@ def main():
 
     for user in users:
         email = user["email"]
-        customer_id = user["customer_id"]
         accounts = user["accounts"]
 
         print(colour(f"\n{'='*60}", BOLD))
-        print(colour(f" {email} (customer {customer_id})", BOLD))
+        print(colour(f" {email}", BOLD))
         print(colour(f"{'='*60}", BOLD))
 
         if args.account:
@@ -639,6 +654,10 @@ def main():
                 continue
 
         token = get_token(email, args.token)
+        customer_id = decode_jwt_customer_id(token) or user.get("customer_id", "")
+        if not customer_id:
+            print(colour("  Could not determine customer ID from token — skipping.", RED))
+            continue
         print()
 
         user_dir = DOWNLOADS_DIR / email
