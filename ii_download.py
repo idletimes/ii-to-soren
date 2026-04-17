@@ -346,6 +346,80 @@ def download_transactions(customer_id, account, token, user_dir, config):
     return results
 
 
+def download_corporate_actions(customer_id, account, token, user_dir, config):
+    """Download corporate action notification PDFs for an account.
+
+    Saves to downloads/<email>/<account_id>/corporate_actions/.
+    Already-downloaded files are skipped; new ones are fetched.
+    """
+    account_id = account["id"]
+    account_name = account.get("name", account_id)
+
+    out_dir = user_dir / account_id / "corporate_actions"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    list_headers = {**make_headers(token), "accept": "application/json"}
+    pdf_headers  = {**make_headers(token), "accept": "application/pdf"}
+
+    # Fetch all pages (1-indexed — pageNumber=0 returns 400)
+    all_docs = []
+    page = 1
+    while True:
+        url = (
+            f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
+            f"/document-CORPORATE_ACTION_NOTIFICATIONS-summaries"
+            f"?pageNumber={page}&pageSize=50&sortField=PUBLISHED_DATE&sortType=DESCENDING"
+        )
+        ii_throttle(config)
+        resp = requests.get(url, headers=list_headers)
+        if resp.status_code in (401, 403):
+            print(colour(f"  Corporate actions {account_name}: AUTH FAILED", RED))
+            return "error"
+        if resp.status_code != 200:
+            print(colour(f"  Corporate actions {account_name}: HTTP {resp.status_code}", RED))
+            return "error"
+        data = resp.json()
+        all_docs.extend(data.get("results", []))
+        if page >= data.get("totalNumberOfPages", 1):
+            break
+        page += 1
+
+    if not all_docs:
+        print(f"  Corporate actions {account_name}: " + colour("none found", YELLOW))
+        return "skipped"
+
+    new_count = 0
+    for doc in all_docs:
+        doc_id  = doc["documentId"]
+        pub     = doc.get("publishedDate", "unknown")
+        company = re.sub(r"[^\w]", "_", doc.get("company", "unknown")).strip("_")[:60]
+        fname   = f"{pub}_{doc_id}_{company}.pdf"
+        out_file = out_dir / fname
+
+        if out_file.exists():
+            continue
+
+        url = f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}/documents/{doc_id}"
+        print(f"  Corporate actions {account_name} ({fname})...", end=" ")
+        ii_throttle(config)
+        resp = requests.get(url, headers=pdf_headers)
+        if resp.status_code in (401, 403):
+            print(colour("AUTH FAILED", RED))
+            return "error"
+        if resp.status_code != 200:
+            print(colour(f"HTTP {resp.status_code}", RED))
+            continue
+
+        out_file.write_bytes(resp.content)
+        print(colour(f"saved → {out_file}", GREEN))
+        new_count += 1
+
+    if new_count == 0:
+        print(f"  Corporate actions {account_name}: " + colour("up to date", YELLOW))
+        return "skipped"
+    return "downloaded"
+
+
 # ── Push to tradeCGT ──────────────────────────────────────────────────────
 
 def cgt_fetch_account_map(api_url, cgt_token):
@@ -676,6 +750,10 @@ def main():
             for account in accounts:
                 result = download_cash(customer_id, account, token, user_dir, config)
                 summary.append((email, "Cash", account.get("name", account["id"]), result))
+            print(colour("  Corporate action PDFs", BOLD))
+            for account in accounts:
+                result = download_corporate_actions(customer_id, account, token, user_dir, config)
+                summary.append((email, "Corporate Actions", account.get("name", account["id"]), result))
             print()
 
         if do_transactions:
