@@ -474,6 +474,41 @@ def ccy_from_tx_filename(filename):
     return m.group(1) if m else None
 
 
+def cgt_fetch_corporate_action_drafts(api_url, cgt_token):
+    """Return the list of pending corporate-action drafts for this user."""
+    resp = requests.get(
+        f"{api_url}/api/corporate-action-drafts",
+        headers={"Authorization": f"Bearer {cgt_token}"},
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    return []
+
+
+def cgt_upload_corporate_action_pdf(api_url, cgt_token, file_path):
+    """Upload a corporate-action PDF to the tradeCGT drafts queue.
+
+    Returns:
+        'uploaded'  – 201 Created
+        'duplicate' – 409 (exact bytes already present; treat as success)
+        'error'     – anything else
+    """
+    with open(file_path, "rb") as f:
+        resp = requests.post(
+            f"{api_url}/api/corporate-action-drafts",
+            headers={"Authorization": f"Bearer {cgt_token}"},
+            files={"file": (file_path.name, f, "application/pdf")},
+            data={"source": "api"},
+        )
+    if resp.status_code == 201:
+        return "uploaded"
+    if resp.status_code == 409:
+        return "duplicate"
+    print(colour(f"HTTP {resp.status_code}", RED))
+    print(colour(f"    {resp.text[:500]}", RED))
+    return "error"
+
+
 def cgt_delete_file(api_url, cgt_token, cgt_account_id, file_id):
     """Delete a file from the tradeCGT API by its ID."""
     resp = requests.delete(
@@ -555,6 +590,13 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
         print(colour(f"\n{'='*60}", BOLD))
         print(colour(f" Pushing: {user_dir.name}", BOLD))
         print(colour(f"{'='*60}", BOLD))
+
+        # Fetch corporate-action drafts once per user (endpoint is user-scoped).
+        # We track by filename so we never re-upload a PDF that's already queued
+        # or was already approved (409 byte-hash check handles the latter).
+        existing_draft_names = {
+            d.get("pdfFileName") for d in cgt_fetch_corporate_action_drafts(api_url, cgt_token)
+        }
 
         for account_dir in sorted(user_dir.iterdir()):
             if not account_dir.is_dir():
@@ -652,6 +694,28 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                     summary.append(("Push valuation", f"{ii_account_id}/{fname}", "pushed"))
                 else:
                     summary.append(("Push valuation", f"{ii_account_id}/{fname}", "error"))
+
+            # Push corporate action PDFs
+            ca_dir = account_dir / "corporate_actions"
+            if ca_dir.is_dir():
+                for pdf_file in sorted(ca_dir.glob("*.pdf")):
+                    fname = pdf_file.name
+                    if fname in existing_draft_names:
+                        print(f"  {ii_account_id}/{fname}: " + colour("already in drafts", YELLOW))
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "skipped"))
+                        continue
+                    print(f"  {ii_account_id}/{fname}...", end=" ")
+                    result = cgt_upload_corporate_action_pdf(api_url, cgt_token, pdf_file)
+                    if result == "uploaded":
+                        existing_draft_names.add(fname)
+                        print(colour("pushed to drafts", GREEN))
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "pushed"))
+                    elif result == "duplicate":
+                        existing_draft_names.add(fname)
+                        print(colour("duplicate — skipped", YELLOW))
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "skipped"))
+                    else:
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "error"))
 
     # Summary
     print(colour(f"\n{'='*60}", BOLD))
