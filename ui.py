@@ -418,8 +418,8 @@ with tab_dl:
     with st.expander("Advanced options"):
         to_date = st.date_input(
             "Transaction end date",
-            value=date.today() - timedelta(days=1),
-            help="Defaults to yesterday to avoid partial-day issues",
+            value=date.today(),
+            help="Defaults to today. The current-year file is always refreshed on the next run, so downloading today's transactions is safe.",
             disabled=st.session_state.dl_running,
         )
 

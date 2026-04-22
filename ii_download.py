@@ -265,8 +265,10 @@ def download_transactions(customer_id, account, token, user_dir, config):
     currencies = account.get("currencies", ["GBP"])
     start_date = account.get("start_date", "2024-01-01")
     today = date.today()
-    # Default to yesterday to avoid partial-day issues; override with --to-date
-    cutoff = config.get("_to_date", today - timedelta(days=1))
+    # Download up to today so today's transactions match today's portfolio snapshot.
+    # The current-year partial is always replaced on the next run, so there's no
+    # risk of a permanently-stale file (including across the Dec 31 → Jan 1 boundary).
+    cutoff = config.get("_to_date", today)
     results = []
 
     out_dir = user_dir / account_id
@@ -282,11 +284,13 @@ def download_transactions(customer_id, account, token, user_dir, config):
                 if latest_complete is None or end > latest_complete:
                     latest_complete = end
 
-        # Find and remove any partial (non-full-year) files that we'll re-download
-        # We keep partials from historic years (e.g. 2022-06-01_2022-12-31 for a mid-year start)
+        # Delete any partial file that ends yesterday or more recently so it gets
+        # re-fetched up to today.  This covers the Dec 31 → Jan 1 boundary: on
+        # Jan 1 the previous day's partial (end = Dec 31) is still refreshed even
+        # though its year differs from today's.  Older historic partials (e.g. a
+        # mid-year start in 2022 ending 2022-12-31) are safely left alone.
         for fpath, start, end, is_full in existing:
-            if not is_full and end.year == cutoff.year:
-                # Current-year partial — delete so we re-fetch up to cutoff
+            if not is_full and end >= cutoff - timedelta(days=1):
                 print(f"  Transactions {account_name}/{ccy}: replacing {fpath.name} (refreshing to {cutoff.isoformat()})")
                 fpath.unlink()
 
