@@ -513,7 +513,7 @@ def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, va
         return False
 
 
-def push_to_cgt(config, account_filter=None, debug=False):
+def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
     """Push downloaded CSV files to the tradeCGT API."""
     cgt_config = config.get("cgt", {})
     api_url = cgt_config.get("api_url")
@@ -544,6 +544,8 @@ def push_to_cgt(config, account_filter=None, debug=False):
 
     for user_dir in sorted(DOWNLOADS_DIR.iterdir()):
         if not user_dir.is_dir():
+            continue
+        if user_emails is not None and user_dir.name not in user_emails:
             continue
 
         print(colour(f"\n{'='*60}", BOLD))
@@ -788,9 +790,11 @@ def main():
 
     had_errors = any(s == "error" for _, _, _, s in summary)
 
-    # Push to tradeCGT if requested
+    # Push to tradeCGT if requested — scoped to the same users that were downloaded
     if args.push:
-        push_to_cgt(config, args.account, debug=args.debug)
+        push_to_cgt(config, args.account,
+                    user_emails=[u["email"] for u in users],
+                    debug=args.debug)
 
     if had_errors:
         sys.exit(1)

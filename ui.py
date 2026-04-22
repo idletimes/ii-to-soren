@@ -58,6 +58,34 @@ def run_and_stream(args, env_extra=None):
     return proc.returncode == 0, "".join(lines)
 
 
+def run_all_users(user_tokens, common_args):
+    """Run ii_download.py once per user (sequentially), streaming combined output.
+    user_tokens: {email: token}. Returns (all_ok: bool, combined_log: str)."""
+    env = os.environ.copy()
+    output_box = st.empty()
+    all_lines = []
+    all_ok = True
+
+    for email, token in user_tokens.items():
+        args = ["--user", email, "--token", token] + common_args
+        proc = subprocess.Popen(
+            [sys.executable, "ii_download.py"] + args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            cwd=Path(__file__).parent,
+        )
+        for line in proc.stdout:
+            all_lines.append(strip_ansi(line))
+            output_box.code("".join(all_lines), language=None)
+        proc.wait()
+        if proc.returncode != 0:
+            all_ok = False
+
+    return all_ok, "".join(all_lines)
+
+
 # ── Bookmarklet JS (shared between onboarding and the Bookmarklet tab) ────────
 
 BM_JS = (
@@ -338,10 +366,11 @@ if st.session_state.get("wiz_step") == 2:
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for _key, _default in [
-    ("dl_running", False), ("dl_args", []), ("dl_env", {}),
+    ("dl_running", False), ("dl_user_tokens", {}), ("dl_common_args", []),
     ("dl_last_ok", None), ("dl_last_log", ""),
     ("push_running", False), ("push_args", []), ("push_env", {}),
     ("push_last_ok", None), ("push_last_log", ""),
+    ("ii_tokens", {}),
 ]:
     if _key not in st.session_state:
         st.session_state[_key] = _default
@@ -357,50 +386,26 @@ with tab_dl:
     st.title("📊 II Downloader")
     st.header("Download from Interactive Investor")
 
-    users = config.get("users", [])
-    user_emails = [u["email"] for u in users]
+    _dl_users = config.get("users", [])
 
-    # Per-user token memory (session only — never written to config)
-    if "ii_tokens" not in st.session_state:
-        st.session_state.ii_tokens = {}
+    # ── Options ───────────────────────────────────────────────────────────────
 
-    col_user, col_token = st.columns([2, 3])
-    with col_user:
-        selected_user = st.selectbox("User", user_emails, key="selected_user",
-                                     disabled=st.session_state.dl_running)
-
-    # When the user selection changes, load that user's stored token
-    if st.session_state.get("_prev_user") != selected_user:
-        st.session_state["ii_token_input"] = st.session_state.ii_tokens.get(selected_user, "")
-        st.session_state["_prev_user"] = selected_user
-
-    def _save_token():
-        st.session_state.ii_tokens[st.session_state.selected_user] = st.session_state["ii_token_input"]
-
-    with col_token:
-        ii_token = st.text_input(
-            "II Bearer Token",
-            key="ii_token_input",
-            on_change=_save_token,
-            placeholder="Paste your token — use the 🔖 Bookmarklet tab to get it",
-            disabled=st.session_state.dl_running,
-        )
-
-    # Account dropdown — options from the selected user's config
-    _sel_user_obj = next((u for u in users if u["email"] == selected_user), None)
-    _user_accounts = _sel_user_obj.get("accounts", []) if _sel_user_obj else []
+    # Account dropdown — all accounts across all users, deduped by ID
     _dl_acct_map = {"All": None}
-    _dl_acct_map.update({f"{a.get('name', a['id'])} ({a['id']})": a["id"] for a in _user_accounts})
+    _dl_seen: set = set()
+    for _u in _dl_users:
+        for _a in _u.get("accounts", []):
+            if _a["id"] not in _dl_seen:
+                _dl_acct_map[f"{_a.get('name', _a['id'])} ({_a['id']})"] = _a["id"]
+                _dl_seen.add(_a["id"])
 
     col_port, col_tx, col_acct = st.columns(3)
-    do_portfolio = col_port.checkbox("Portfolio & Cash", value=True, disabled=st.session_state.dl_running)
-    do_transactions = col_tx.checkbox("Transactions", value=True, disabled=st.session_state.dl_running)
-    _dl_acct_sel = col_acct.selectbox("Account", list(_dl_acct_map.keys()),
-                                      disabled=st.session_state.dl_running)
-    account_filter = _dl_acct_map[_dl_acct_sel]
+    do_portfolio    = col_port.checkbox("Portfolio & Cash", value=True, disabled=st.session_state.dl_running)
+    do_transactions = col_tx.checkbox("Transactions",       value=True, disabled=st.session_state.dl_running)
+    _dl_acct_sel    = col_acct.selectbox("Account", list(_dl_acct_map.keys()), disabled=st.session_state.dl_running)
+    account_filter  = _dl_acct_map[_dl_acct_sel]
 
     _cgt_key = config.get("cgt", {}).get("api_key", "")
-
     also_push = st.checkbox(
         "Push to tradeCGT after download",
         value=bool(_cgt_key),
@@ -418,33 +423,63 @@ with tab_dl:
             disabled=st.session_state.dl_running,
         )
 
+    # ── Per-user token inputs ─────────────────────────────────────────────────
+
+    st.divider()
+    for _u in _dl_users:
+        _email = _u["email"]
+        _tok_key = f"ii_tok_{_email}"
+        col_e, col_t = st.columns([2, 3])
+        col_e.markdown(f"**{_email}**")
+
+        def _make_save(_e=_email, _k=_tok_key):
+            def _cb(): st.session_state.ii_tokens[_e] = st.session_state[_k]
+            return _cb
+
+        col_t.text_input(
+            "II Bearer Token",
+            value=st.session_state.ii_tokens.get(_email, ""),
+            key=_tok_key,
+            on_change=_make_save(),
+            placeholder="Paste token — use the 🔖 Bookmarklet tab",
+            label_visibility="collapsed",
+            disabled=st.session_state.dl_running,
+        )
+
+    # ── Run ───────────────────────────────────────────────────────────────────
+
     if st.session_state.get("dl_error"):
         st.error(st.session_state.dl_error)
         st.session_state.dl_error = ""
 
-    if st.button("▶ Run Download", type="primary",
-                 disabled=st.session_state.dl_running):
-        if not ii_token:
-            st.session_state.dl_error = "Please paste an II bearer token before running."
+    if st.button("▶ Run Download", type="primary", disabled=st.session_state.dl_running):
+        # Collect users that have a token
+        _user_tokens = {
+            _u["email"]: st.session_state.ii_tokens.get(_u["email"], "")
+            for _u in _dl_users
+            if st.session_state.ii_tokens.get(_u["email"], "")
+        }
+        if not _user_tokens:
+            st.session_state.dl_error = "Paste at least one II bearer token above."
             st.rerun()
-        args = ["--user", selected_user, "--token", ii_token]
+        common = []
         if do_portfolio and not do_transactions:
-            args += ["--portfolio"]
+            common += ["--portfolio"]
         elif do_transactions and not do_portfolio:
-            args += ["--transactions"]
+            common += ["--transactions"]
         if account_filter:
-            args += ["--account", account_filter]
-        args += ["--to-date", to_date.isoformat()]
+            common += ["--account", account_filter]
+        common += ["--to-date", to_date.isoformat()]
         if also_push and _cgt_key:
-            args += ["--push"]
-        st.session_state.dl_args = args
-        st.session_state.dl_env = {}
+            common += ["--push"]
+        st.session_state.dl_user_tokens = _user_tokens
+        st.session_state.dl_common_args = common
         st.session_state.dl_running = True
         st.rerun()
 
     if st.session_state.dl_running:
         with st.status("Downloading from Interactive Investor…", expanded=True) as status:
-            ok, log = run_and_stream(st.session_state.dl_args, st.session_state.dl_env)
+            ok, log = run_all_users(st.session_state.dl_user_tokens, st.session_state.dl_common_args)
             status.update(
                 label="Download complete ✓" if ok else "Download failed ✗",
                 state="complete" if ok else "error",
