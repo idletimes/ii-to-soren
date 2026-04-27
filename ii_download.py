@@ -20,6 +20,45 @@ BASE_URL = "https://api-prod.ii.co.uk/enrolled/api"
 DOWNLOADS_DIR = Path("downloads")
 CONFIG_FILE = Path("config.yaml")
 
+# ── Interactive Investor API endpoints used ───────────────────────────────────
+#
+# All requests require:
+#   Authorization: Bearer <token>   (short-lived JWT, ~28 min, obtained via browser)
+#   accept: application/json        (except the PDF download, which needs application/pdf)
+#
+# Variables:
+#   {cid}  — customer ID (extracted from JWT claim https://onestack.co.uk/cid)
+#   {aid}  — account ID (e.g. "0970887")
+#   {ccy}  — currency code (e.g. "GBP", "USD")
+#   {did}  — document ID (integer, from the summaries list)
+#
+# 1. Portfolio snapshot (CSV)
+#    GET /2/customers/{cid}/accounts/{aid}/portfolio/export
+#    → CSV of current holdings
+#
+# 2. Cash balance (JSON)
+#    GET /2/customers/{cid}/accounts/{aid}/portfolio
+#    → JSON; cash extracted from response["account"]["totalCashValue"] / ["currency"]
+#
+# 3. Transaction statement (CSV)
+#    GET /1/customers/{cid}/accounts/{aid}/statements/{ccy}
+#        ?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD
+#        &sortBy=TRANSACTION_DATE&sortOrder=DESCENDING
+#    → CSV of transactions for the given currency and date range
+#
+# 4. Corporate action notification summaries (JSON, paginated)
+#    GET /1/customers/{cid}/accounts/{aid}/document-CORPORATE_ACTION_NOTIFICATIONS-summaries
+#        ?pageNumber={n}&pageSize=50&sortField=PUBLISHED_DATE&sortType=DESCENDING
+#    → JSON; pagination is 1-indexed (pageNumber=0 returns 400)
+#    → Each item has: documentId, publishedDate, company, …
+#
+# 5. Corporate action PDF download
+#    GET /1/customers/{cid}/accounts/{aid}/documents/{did}
+#    Headers: accept: application/pdf   ← must be pdf, not json (json returns 406)
+#    → Raw PDF bytes
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ANSI colours
 GREEN = "\033[92m"
 YELLOW = "\033[93m"

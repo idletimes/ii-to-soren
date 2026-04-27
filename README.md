@@ -227,6 +227,22 @@ The tradeCGT API key is read from (in order of precedence):
 
 A long-lived API key from **Settings → API** in tradeCGT is recommended so you don't need to paste a token each run.
 
+## Interactive Investor API endpoints
+
+All requests are authenticated with a short-lived Bearer JWT (~28 min) obtained via the browser. The base URL is `https://api-prod.ii.co.uk/enrolled/api`.
+
+| # | Method | Path | Returns |
+|---|--------|------|---------|
+| 1 | GET | `/2/customers/{cid}/accounts/{aid}/portfolio/export` | Portfolio snapshot CSV |
+| 2 | GET | `/2/customers/{cid}/accounts/{aid}/portfolio` | Cash balance (JSON) |
+| 3 | GET | `/1/customers/{cid}/accounts/{aid}/statements/{ccy}?fromDate=…&toDate=…&sortBy=TRANSACTION_DATE&sortOrder=DESCENDING` | Transaction statement CSV |
+| 4 | GET | `/1/customers/{cid}/accounts/{aid}/document-CORPORATE_ACTION_NOTIFICATIONS-summaries?pageNumber={n}&pageSize=50&sortField=PUBLISHED_DATE&sortType=DESCENDING` | Corporate action list (JSON, 1-indexed pagination) |
+| 5 | GET | `/1/customers/{cid}/accounts/{aid}/documents/{did}` | Corporate action PDF (requires `accept: application/pdf`) |
+
+**Variables:** `{cid}` = customer ID (auto-extracted from the JWT), `{aid}` = account ID, `{ccy}` = currency code (e.g. `GBP`), `{did}` = document ID from the summaries list.
+
+> These endpoints are undocumented and unofficial. They work as of 2026 but may change without notice.
+
 ## Running tests
 
 ```bash
