@@ -146,6 +146,24 @@ users:
 | `cgt.api_url` | No | tradeCGT API base URL |
 | `cgt.api_key` | No | tradeCGT long-lived API key (from Settings → API) |
 
+### Choosing a start date
+
+`start_date` controls how far back the tool fetches transaction history for each account. **When in doubt, set it earlier rather than later.**
+
+- If it's too early, you'll download a few extra empty or irrelevant rows — no harm done.
+- If it's too late, you'll permanently miss transactions that happened before it, which will produce incorrect CGT calculations.
+
+A safe default is the date you opened the account (visible in your II account summary). If you're not sure, pick a date a year or two before you think you first traded. Re-downloading from an earlier start date is always possible — just delete the relevant files from `downloads/` and run again.
+
+### Choosing currencies
+
+`currencies` controls which currency transaction statements are downloaded for each account. Most II accounts only ever transact in GBP, but if you've bought US or other international shares you'll also have a USD (or other) statement. **When in doubt, include more currencies rather than fewer.**
+
+- If you include a currency you've never transacted in, the downloaded file will just be empty — no harm done.
+- If you omit a currency you have transacted in, those transactions will be missing entirely from your CGT calculations.
+
+To check which currencies you need, log into II, go to **My ii → Statements**, and see which currency tabs appear for each account. Common values are `GBP` and `USD`.
+
 ## Output structure
 
 ```
