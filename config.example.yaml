@@ -1,21 +1,35 @@
-# Random delay (seconds) between II API requests to avoid rate limiting
+# Random delay between II API requests (seconds) — avoids rate limiting
 ii_request_delay:
   min: 1
   max: 3
 
+# tradeCGT integration (only needed for --push / --push-only)
 cgt:
-  api_url: "http://localhost:8000"
+  api_url: "https://your.tradecgt.instance"
+  # Long-lived API key from Settings → API in tradeCGT.
+  # If omitted you will be prompted for a token on each push.
+  # api_key: "tcgt_xxxxxxxxxxxxxxxxxxxx"
 
 users:
   - email: "you@example.com"
-    customer_id: "00000000000"
+    # customer_id is optional — extracted automatically from the II Bearer token.
+    # Uncomment only if you need to override it.
+    # customer_id: "00000000000"
     accounts:
       - id: "1234567"
         name: "ISA"
-        start_date: "2024-01-01"
+        start_date: "2024-01-01"   # earliest date to fetch transactions from
         currencies: ["GBP"]
 
       - id: "7654321"
         name: "Trading"
         start_date: "2023-06-01"
         currencies: ["GBP", "USD"]
+
+  # Add more users for joint / family accounts:
+  # - email: "partner@example.com"
+  #   accounts:
+  #     - id: "9999999"
+  #       name: "ISA"
+  #       start_date: "2022-01-01"
+  #       currencies: ["GBP"]
