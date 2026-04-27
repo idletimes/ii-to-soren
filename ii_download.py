@@ -323,13 +323,13 @@ def download_transactions(customer_id, account, token, user_dir, config):
                 if latest_complete is None or end > latest_complete:
                     latest_complete = end
 
-        # Delete any partial file that ends yesterday or more recently so it gets
-        # re-fetched up to today.  This covers the Dec 31 → Jan 1 boundary: on
-        # Jan 1 the previous day's partial (end = Dec 31) is still refreshed even
-        # though its year differs from today's.  Older historic partials (e.g. a
-        # mid-year start in 2022 ending 2022-12-31) are safely left alone.
+        # Delete any current-year partial so it gets re-fetched as a single unified
+        # file up to today.  Also catches the Dec 31 → Jan 1 boundary: on Jan 1
+        # the Dec 31 partial from last year is refreshed even though its year
+        # differs from today's.  Older historic partials (e.g. a mid-year start
+        # in 2022 ending 2022-12-31) are safely left alone.
         for fpath, start, end, is_full in existing:
-            if not is_full and end >= cutoff - timedelta(days=1):
+            if not is_full and (end.year == cutoff.year or end == date(cutoff.year - 1, 12, 31)):
                 print(f"  Transactions {account_name}/{ccy}: replacing {fpath.name} (refreshing to {cutoff.isoformat()})")
                 fpath.unlink()
 
@@ -669,14 +669,17 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                 if is_current_year_partial(fname):
                     # Delete any stale current-year partials for this currency from tradeCGT,
                     # then upload unconditionally — the local file is always the freshest version.
+                    # Iterate over a copy and remove deleted entries so a second current-year
+                    # partial for the same currency doesn't trigger a double-delete.
                     ccy = ccy_from_tx_filename(fname)
-                    for tx in uploaded_tx:
+                    for tx in list(uploaded_tx):
                         tx_fname = tx.get("file_name", "")
                         if is_current_year_partial(tx_fname) and ccy_from_tx_filename(tx_fname) == ccy:
                             print(f"  {ii_account_id}/{tx_fname}: " + colour("deleting stale partial from tradeCGT...", YELLOW), end=" ")
                             if cgt_delete_file(api_url, cgt_token, cgt_id, tx["id"]):
                                 print(colour("deleted", GREEN))
                                 summary.append(("Push transactions", f"{ii_account_id}/{tx_fname}", "deleted"))
+                                uploaded_tx.remove(tx)
                             else:
                                 print(colour("delete failed", RED))
                                 summary.append(("Push transactions", f"{ii_account_id}/{tx_fname}", "error"))

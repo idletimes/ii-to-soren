@@ -282,22 +282,25 @@ class TestCgtShouldSkipValuation:
 # Tests verify this rule covers the Dec 31 → Jan 1 boundary case.
 
 class TestPartialDeletionCriterion:
-    """Tests for the 'should we delete this partial and re-download?' rule."""
+    """Tests for the 'should we delete this partial and re-download?' rule.
+
+    Criterion: delete if end.year == cutoff.year
+                        OR end == Dec 31 of previous year (Dec 31 → Jan 1 boundary)
+    """
 
     def _should_delete(self, end: date, cutoff: date) -> bool:
-        return end >= cutoff - timedelta(days=1)
+        return end.year == cutoff.year or end == date(cutoff.year - 1, 12, 31)
 
     def test_same_day_partial_is_deleted(self):
         today = date(2026, 4, 22)
         assert self._should_delete(today, today) is True
 
-    def test_yesterday_partial_is_deleted(self):
-        today = date(2026, 4, 22)
-        assert self._should_delete(today - timedelta(days=1), today) is True
+    def test_recent_current_year_partial_is_deleted(self):
+        assert self._should_delete(date(2026, 4, 20), date(2026, 4, 27)) is True
 
-    def test_two_days_ago_partial_is_not_deleted(self):
-        today = date(2026, 4, 22)
-        assert self._should_delete(today - timedelta(days=2), today) is False
+    def test_months_old_current_year_partial_is_deleted(self):
+        # Even if we haven't run in months, the current-year partial is still deleted
+        assert self._should_delete(date(2026, 1, 15), date(2026, 4, 27)) is True
 
     def test_dec_31_partial_deleted_on_jan_1(self):
         # The key year-boundary case: a Dec 31 partial must be refreshed on Jan 1
@@ -306,7 +309,13 @@ class TestPartialDeletionCriterion:
         assert self._should_delete(dec_31, jan_1) is True
 
     def test_old_historic_partial_not_deleted(self):
-        # A 2022 mid-year-start partial should never be touched
+        # A 2022 mid-year-start partial (end Dec 31 2022) should never be touched
         old_end = date(2022, 12, 31)
         today = date(2026, 4, 22)
         assert self._should_delete(old_end, today) is False
+
+    def test_last_years_dec_31_deleted_anywhere_in_current_year(self):
+        # A Dec 31 2025 partial is deleted whenever we run in 2026, not just on Jan 1.
+        # That's correct: build_year_chunks will re-download 2025 as a proper locked
+        # full-year file, then start a fresh 2026 partial.
+        assert self._should_delete(date(2025, 12, 31), date(2026, 4, 27)) is True
