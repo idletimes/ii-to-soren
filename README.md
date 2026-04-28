@@ -1,4 +1,4 @@
-# ii-csv-downloader
+# ii-to-soren
 
 A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) and push it to a [Soren](https://www.getsoren.app) instance for CGT calculations.
 

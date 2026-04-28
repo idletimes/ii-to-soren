@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Streamlit UI for ii-csv-downloader."""
+"""Streamlit UI for ii-to-soren."""
 
 import copy
 import os
@@ -15,7 +15,7 @@ import yaml
 CONFIG_FILE = Path("config.yaml")
 
 st.set_page_config(
-    page_title="II CSV Downloader",
+    page_title="II to Soren",
     page_icon="📊",
     layout="wide",
 )
@@ -182,7 +182,7 @@ def show_onboarding():
 
     CURRENCIES = ["AUD", "CAD", "CHF", "DKK", "EUR", "GBP", "HKD", "JPY", "NOK", "SEK", "SGD", "USD"]
 
-    st.title("📊 Welcome to II Downloader")
+    st.title("📊 Welcome to II → Soren")
     st.info(
         "👋 No config file found yet — let's create one. "
         "Fill in your details below and click **Create Config** to get started."
@@ -383,7 +383,7 @@ tab_dl, tab_push, tab_cfg, tab_bm = st.tabs(["📥 Download", "📤 Push to Sore
 # ─── Download ─────────────────────────────────────────────────────────────────
 
 with tab_dl:
-    st.title("📊 II Downloader")
+    st.title("📊 II → Soren")
     st.header("Download from Interactive Investor")
 
     _dl_users = config.get("users", [])
