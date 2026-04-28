@@ -15,22 +15,103 @@ It comes with both a **Streamlit web UI** (recommended) and a **CLI** for script
 
 ## Setup
 
-**Requirements:** Python 3.10+
+> If you're comfortable with Python and the command line, the short version is: clone the repo, `pip install -r requirements.txt`, then `streamlit run ui.py`. The first-run wizard in the UI handles the rest.
+>
+> If any of that is unfamiliar, follow the step-by-step guide for your operating system below.
+
+<details>
+<summary><strong>🍎 Mac — step by step</strong></summary>
+
+### 1. Install Python
+
+Check if you already have Python 3.10 or later:
+
+1. Open **Terminal** (press `⌘ Space`, type `Terminal`, hit Enter)
+2. Type `python3 --version` and press Enter
+
+If you see something like `Python 3.11.4` you're good. If you get an error or a version below 3.10, download the latest Python installer from [python.org/downloads](https://www.python.org/downloads/) and run it.
+
+### 2. Download this project
+
+On this GitHub page, click the green **Code** button → **Download ZIP**. Once downloaded, unzip it — you'll get a folder called `ii-to-soren-main`. Move it somewhere convenient, like your Desktop or Documents.
+
+### 3. Open Terminal in the project folder
+
+Open Terminal and navigate to the folder you just unzipped. The easiest way:
+
+- Type `cd ` (with a space after it) in Terminal
+- Drag the `ii-to-soren-main` folder from Finder into the Terminal window — it fills in the path automatically
+- Press Enter
+
+### 4. Install dependencies
+
+Copy and paste this into Terminal and press Enter:
 
 ```bash
-pip install -r requirements.txt
-cp config.example.yaml config.yaml
+pip3 install -r requirements.txt
 ```
 
-Then edit `config.yaml` with your details — see [Config format](#config-format) below.
+This downloads the libraries the app needs. It only needs to be done once.
 
-`config.yaml` is gitignored and should never be committed.
+### 5. Start the app
+
+```bash
+streamlit run ui.py
+```
+
+Your browser should open automatically at `http://localhost:8501`. If it doesn't, open your browser and go to that address. The app will walk you through the rest of the setup.
+
+To stop the app, go back to Terminal and press `Ctrl C`.
+
+</details>
+
+<details>
+<summary><strong>🪟 Windows — step by step</strong></summary>
+
+### 1. Install Python
+
+1. Go to [python.org/downloads](https://www.python.org/downloads/) and download the latest Python installer
+2. Run the installer — **important:** on the first screen, tick the box that says **"Add Python to PATH"** before clicking Install
+3. Once installed, open **Command Prompt** (press `Windows key`, type `cmd`, hit Enter)
+4. Type `python --version` and press Enter — you should see something like `Python 3.12.3`
+
+### 2. Download this project
+
+On this GitHub page, click the green **Code** button → **Download ZIP**. Once downloaded, right-click the ZIP and choose **Extract All**. Move the extracted folder somewhere convenient, like your Desktop or Documents.
+
+### 3. Open Command Prompt in the project folder
+
+1. Open the extracted `ii-to-soren-main` folder in File Explorer
+2. Click the address bar at the top of the window (where it shows the folder path)
+3. Type `cmd` and press Enter — a Command Prompt window opens already in the right folder
+
+### 4. Install dependencies
+
+Type this and press Enter:
+
+```
+pip install -r requirements.txt
+```
+
+This downloads the libraries the app needs. It only needs to be done once.
+
+### 5. Start the app
+
+```
+streamlit run ui.py
+```
+
+Your browser should open automatically at `http://localhost:8501`. If it doesn't, open your browser and go to that address. The app will walk you through the rest of the setup.
+
+To stop the app, go back to Command Prompt and press `Ctrl C`.
+
+</details>
 
 ## Getting an II Bearer token
 
 The II API requires an authenticated session token. The easiest way to get one is via the **bookmarklet** — a one-click button you add to your browser's bookmarks bar that copies the token for you.
 
-When you first run the UI (`streamlit run ui.py`) it walks you through bookmarklet setup automatically.
+When you first run the UI it walks you through bookmarklet setup automatically.
 
 Alternatively, you can get a token manually:
 
