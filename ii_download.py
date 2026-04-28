@@ -663,7 +663,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                 lines = csv_file.read_text().strip().splitlines()
                 if len(lines) <= 1:
                     print(f"  {ii_account_id}/{fname}: " + colour("skipping — no data rows (header only)", YELLOW))
-                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
+                    summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped", "header only"))
                     continue
 
                 if is_current_year_partial(fname):
@@ -686,7 +686,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                 else:
                     if cgt_should_skip_transaction(fname, uploaded_tx):
                         print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
-                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped"))
+                        summary.append(("Push transactions", f"{ii_account_id}/{fname}", "skipped", "already uploaded"))
                         continue
 
                 print(f"  {ii_account_id}/{fname}...", end=" ")
@@ -707,7 +707,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                 # Skip if already uploaded (match by filename)
                 if any(v.get("file_name") == fname for v in uploaded_val):
                     print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
-                    summary.append(("Push cash", f"{ii_account_id}/{fname}", "skipped"))
+                    summary.append(("Push cash", f"{ii_account_id}/{fname}", "skipped", "already uploaded"))
                     continue
 
                 print(f"  {ii_account_id}/{fname}...", end=" ")
@@ -727,7 +727,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
 
                 if cgt_should_skip_valuation(val_date, uploaded_val):
                     print(f"  {ii_account_id}/{fname}: " + colour("already uploaded", YELLOW))
-                    summary.append(("Push valuation", f"{ii_account_id}/{fname}", "skipped"))
+                    summary.append(("Push valuation", f"{ii_account_id}/{fname}", "skipped", "already uploaded"))
                     continue
 
                 print(f"  {ii_account_id}/{fname}...", end=" ")
@@ -744,37 +744,50 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                     fname = pdf_file.name
                     if fname in existing_draft_names:
                         print(f"  {ii_account_id}/{fname}: " + colour("already in drafts", YELLOW))
-                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "skipped"))
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "skipped", "already in drafts"))
                         continue
                     print(f"  {ii_account_id}/{fname}...", end=" ")
                     result = cgt_upload_corporate_action_pdf(api_url, cgt_token, pdf_file)
                     if result == "uploaded":
                         existing_draft_names.add(fname)
                         print(colour("pushed to drafts", GREEN))
-                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "pushed"))
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "pushed", ""))
                     elif result == "duplicate":
                         existing_draft_names.add(fname)
                         print(colour("duplicate — skipped", YELLOW))
-                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "skipped"))
+                        summary.append(("Push corp action", f"{ii_account_id}/{fname}", "skipped", "duplicate"))
                     else:
                         summary.append(("Push corp action", f"{ii_account_id}/{fname}", "error"))
 
-    # Summary
+    # Summary — show actions individually, collapse skips into counts
     print(colour(f"\n{'='*60}", BOLD))
     print(colour(" Push Summary", BOLD))
     print(colour(f"{'='*60}", BOLD))
+
     had_errors = False
-    for dtype, label, status in summary:
+    skip_counts = {}  # reason → count
+
+    for entry in summary:
+        dtype, label, status = entry[0], entry[1], entry[2]
+        reason = entry[3] if len(entry) > 3 else ""
+
+        if status == "skipped":
+            skip_counts[reason] = skip_counts.get(reason, 0) + 1
+            continue
+
         if status == "pushed":
             icon = colour("OK  ", GREEN)
-        elif status == "skipped":
-            icon = colour("SKIP", YELLOW)
         elif status == "deleted":
             icon = colour("DEL ", YELLOW)
         else:
             icon = colour("FAIL", RED)
             had_errors = True
         print(f"  [{icon}] {dtype}: {label}")
+
+    if skip_counts:
+        print(colour(f"\n  Skipped (no action needed):", YELLOW))
+        for reason, count in sorted(skip_counts.items()):
+            print(f"    {count:3d}  {reason}")
 
     if had_errors:
         sys.exit(1)
