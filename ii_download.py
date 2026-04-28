@@ -463,10 +463,10 @@ def download_corporate_actions(customer_id, account, token, user_dir, config):
     return "downloaded"
 
 
-# ── Push to tradeCGT ──────────────────────────────────────────────────────
+# ── Push to Soren ──────────────────────────────────────────────────────
 
 def cgt_fetch_account_map(api_url, cgt_token):
-    """Fetch tradeCGT accounts and build accountNumber → cgt_id mapping."""
+    """Fetch Soren accounts and build accountNumber → cgt_id mapping."""
     resp = requests.get(
         f"{api_url}/api/accounts",
         headers={"Authorization": f"Bearer {cgt_token}"},
@@ -480,7 +480,7 @@ def cgt_fetch_account_map(api_url, cgt_token):
 
 
 def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id, debug=False):
-    """Fetch list of already-uploaded files for a tradeCGT account."""
+    """Fetch list of already-uploaded files for a Soren account."""
     resp = requests.get(
         f"{api_url}/api/accounts/{cgt_account_id}/files",
         headers={"Authorization": f"Bearer {cgt_token}"},
@@ -525,7 +525,7 @@ def cgt_fetch_corporate_action_drafts(api_url, cgt_token):
 
 
 def cgt_upload_corporate_action_pdf(api_url, cgt_token, file_path):
-    """Upload a corporate-action PDF to the tradeCGT drafts queue.
+    """Upload a corporate-action PDF to the Soren drafts queue.
 
     Returns:
         'uploaded'  – 201 Created
@@ -549,7 +549,7 @@ def cgt_upload_corporate_action_pdf(api_url, cgt_token, file_path):
 
 
 def cgt_delete_file(api_url, cgt_token, cgt_account_id, file_id):
-    """Delete a file from the tradeCGT API by its ID."""
+    """Delete a file from the Soren API by its ID."""
     resp = requests.delete(
         f"{api_url}/api/accounts/{cgt_account_id}/files/{file_id}",
         headers={"Authorization": f"Bearer {cgt_token}"},
@@ -570,7 +570,7 @@ def cgt_should_skip_valuation(valuation_date_str, uploaded_valuations):
 
 
 def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, valuation_date=None):
-    """Upload a CSV file to the tradeCGT API."""
+    """Upload a CSV file to the Soren API."""
     data = {"file_type": file_type}
     if valuation_date:
         data["valuation_date"] = valuation_date
@@ -592,7 +592,7 @@ def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, va
 
 
 def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
-    """Push downloaded CSV files to the tradeCGT API."""
+    """Push downloaded CSV files to the Soren API."""
     cgt_config = config.get("cgt", {})
     api_url = cgt_config.get("api_url")
     if not api_url:
@@ -602,13 +602,13 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
     cgt_token = (
         os.environ.get("CGT_TOKEN")
         or cgt_config.get("api_key")
-        or getpass.getpass("Paste tradeCGT Bearer token: ").strip()
+        or getpass.getpass("Paste Soren Bearer token: ").strip()
     )
     if cgt_token.lower().startswith("bearer "):
         cgt_token = cgt_token[7:]
 
     print()
-    print(colour(BOLD + "Fetching tradeCGT account mapping..." + RESET, BOLD))
+    print(colour(BOLD + "Fetching Soren account mapping..." + RESET, BOLD))
     account_map = cgt_fetch_account_map(api_url, cgt_token)
     if account_map is None:
         return
@@ -647,7 +647,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
 
             cgt_id = account_map.get(ii_account_id)
             if cgt_id is None:
-                print(colour(f"  Account {ii_account_id}: no matching tradeCGT account — skipping", YELLOW))
+                print(colour(f"  Account {ii_account_id}: no matching Soren account — skipping", YELLOW))
                 continue
 
             # Fetch what's already uploaded
@@ -667,7 +667,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                     continue
 
                 if is_current_year_partial(fname):
-                    # Delete any stale current-year partials for this currency from tradeCGT,
+                    # Delete any stale current-year partials for this currency from Soren,
                     # then upload unconditionally — the local file is always the freshest version.
                     # Iterate over a copy and remove deleted entries so a second current-year
                     # partial for the same currency doesn't trigger a double-delete.
@@ -675,7 +675,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
                     for tx in list(uploaded_tx):
                         tx_fname = tx.get("file_name", "")
                         if is_current_year_partial(tx_fname) and ccy_from_tx_filename(tx_fname) == ccy:
-                            print(f"  {ii_account_id}/{tx_fname}: " + colour("deleting stale partial from tradeCGT...", YELLOW), end=" ")
+                            print(f"  {ii_account_id}/{tx_fname}: " + colour("deleting stale partial from Soren...", YELLOW), end=" ")
                             if cgt_delete_file(api_url, cgt_token, cgt_id, tx["id"]):
                                 print(colour("deleted", GREEN))
                                 summary.append(("Push transactions", f"{ii_account_id}/{tx_fname}", "deleted"))
@@ -823,10 +823,10 @@ def main():
     parser.add_argument("--account", type=str, help="Download for a specific account ID only")
     parser.add_argument("--token", type=str, help="Bearer token (skip prompt — only works for single user)")
     parser.add_argument("--to-date", type=str, help="Transaction end date (YYYY-MM-DD). Defaults to yesterday")
-    parser.add_argument("--push", action="store_true", help="Push downloaded CSVs to tradeCGT API")
-    parser.add_argument("--push-only", action="store_true", help="Push to tradeCGT without downloading first")
+    parser.add_argument("--push", action="store_true", help="Push downloaded CSVs to Soren API")
+    parser.add_argument("--push-only", action="store_true", help="Push to Soren without downloading first")
     parser.add_argument("--config", type=str, default=str(CONFIG_FILE), help="Path to config file")
-    parser.add_argument("--debug", action="store_true", help="Print raw tradeCGT API responses for debugging")
+    parser.add_argument("--debug", action="store_true", help="Print raw Soren API responses for debugging")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -913,7 +913,7 @@ def main():
 
     had_errors = any(s == "error" for _, _, _, s in summary)
 
-    # Push to tradeCGT if requested — scoped to the same users that were downloaded
+    # Push to Soren if requested — scoped to the same users that were downloaded
     if args.push:
         push_to_cgt(config, args.account,
                     user_emails=[u["email"] for u in users],

@@ -1,6 +1,6 @@
 # ii-csv-downloader
 
-A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) and push it to a [tradeCGT](https://tradecgt.com) instance for CGT calculations.
+A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) and push it to a [Soren](https://www.getsoren.app) instance for CGT calculations.
 
 It comes with both a **Streamlit web UI** (recommended) and a **CLI** for scripting / automation.
 
@@ -52,7 +52,7 @@ The UI guides you through initial setup and lets you:
 
 - Paste II Bearer tokens for each configured user
 - Choose which account(s) to download
-- Optionally push to tradeCGT immediately after downloading
+- Optionally push to Soren immediately after downloading
 - View live output and a success/failure summary
 
 ## CLI usage
@@ -82,10 +82,10 @@ python ii_download.py --user alice --token "eyJhbG..."
 # Override the transaction end date (default: today)
 python ii_download.py --to-date 2026-03-01
 
-# Download and push to tradeCGT in one step
+# Download and push to Soren in one step
 python ii_download.py --push
 
-# Push existing downloads to tradeCGT (no II download)
+# Push existing downloads to Soren (no II download)
 python ii_download.py --push-only
 
 # Push a specific account only
@@ -103,9 +103,9 @@ ii_request_delay:
   min: 1
   max: 3
 
-# tradeCGT integration (only needed for --push / --push-only)
+# Soren integration (only needed for --push / --push-only)
 cgt:
-  api_url: "https://your.tradecgt.instance"
+  api_url: "https://app.getsoren.app"
   api_key: "tcgt_xxxxxxxxxxxxxxxxxxxx"   # long-lived API key from Settings → API
 
 users:
@@ -143,8 +143,8 @@ users:
 | `users[].accounts[].name` | No | Friendly name shown in logs |
 | `users[].customer_id` | No | II customer ID — auto-extracted from JWT if omitted |
 | `ii_request_delay.min/max` | No | Throttle between API calls (seconds). Default: 1–3 |
-| `cgt.api_url` | No | tradeCGT API base URL |
-| `cgt.api_key` | No | tradeCGT long-lived API key (from Settings → API) |
+| `cgt.api_url` | No | Soren API base URL |
+| `cgt.api_key` | No | Soren long-lived API key (from Settings → API) |
 
 ### Choosing a start date
 
@@ -198,34 +198,34 @@ downloads/
 
 The current-year partial file is always replaced so that transactions made since the last run are captured. This is safe across the year-end boundary: a Dec 31 partial is replaced on Jan 1 as well.
 
-## Push to tradeCGT
+## Push to Soren
 
-The `--push` and `--push-only` flags upload downloaded files to a [tradeCGT](https://tradecgt.com) instance.
+The `--push` and `--push-only` flags upload downloaded files to a [Soren](https://www.getsoren.app) instance.
 
 ### CSV files (transactions, portfolio, cash)
 
-1. The tool fetches your tradeCGT account list and maps II account numbers automatically
+1. The tool fetches your Soren account list and maps II account numbers automatically
 2. Files already uploaded are skipped (by filename / valuation date)
 3. The current-year transaction partial is always replaced with the freshest local version
 4. Cash valuations already recorded in the UI don't block portfolio CSV uploads
 
 ### Corporate action PDFs
 
-Corporate action PDFs are pushed to the tradeCGT drafts queue for human review:
+Corporate action PDFs are pushed to the Soren drafts queue for human review:
 
 1. Existing drafts are checked by filename — already-queued files are skipped
 2. The server also deduplicates by PDF hash (returns 409 if the same bytes were previously uploaded or approved)
-3. Uploaded PDFs appear under **Settings → Corporate actions → Pending review** in the tradeCGT UI, where you can review, tweak auto-parsed fields, and approve or reject each one
+3. Uploaded PDFs appear under **Settings → Corporate actions → Pending review** in the Soren UI, where you can review, tweak auto-parsed fields, and approve or reject each one
 
 ### Authentication
 
-The tradeCGT API key is read from (in order of precedence):
+The Soren API key is read from (in order of precedence):
 
 1. `CGT_TOKEN` environment variable
 2. `cgt.api_key` in `config.yaml`
 3. Interactive prompt
 
-A long-lived API key from **Settings → API** in tradeCGT is recommended so you don't need to paste a token each run.
+A long-lived API key from **Settings → API** in Soren is recommended so you don't need to paste a token each run.
 
 ## Interactive Investor API endpoints
 
@@ -256,7 +256,7 @@ The test suite covers all pure-logic functions (JWT decoding, date chunking, fil
 - `config.yaml` is gitignored — never commit it
 - The `downloads/` directory contains your financial data — also gitignored
 - Bearer tokens are short-lived (~28 min) and are never written to disk
-- The tradeCGT API key is stored only in `config.yaml`
+- The Soren API key is stored only in `config.yaml`
 
 ## License
 

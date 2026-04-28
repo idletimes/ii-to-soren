@@ -3,10 +3,10 @@ ii_request_delay:
   min: 1
   max: 3
 
-# tradeCGT integration (only needed for --push / --push-only)
+# Soren integration (only needed for --push / --push-only)
 cgt:
-  api_url: "https://your.tradecgt.instance"
-  # Long-lived API key from Settings → API in tradeCGT.
+  api_url: "https://app.getsoren.app"
+  # Long-lived API key from Settings → API in Soren.
   # If omitted you will be prompted for a token on each push.
   # api_key: "tcgt_xxxxxxxxxxxxxxxxxxxx"
 

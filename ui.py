@@ -191,7 +191,7 @@ def show_onboarding():
     if "wiz_cfg" not in st.session_state:
         st.session_state.wiz_cfg = {
             "ii_request_delay": {"min": 1, "max": 3},
-            "cgt": {"api_url": "http://localhost:8000"},
+            "cgt": {"api_url": "https://app.getsoren.app"},
             "users": [{"email": "", "accounts": [
                 {"id": "", "name": "", "start_date": "2024-01-01", "currencies": ["GBP"]}
             ]}],
@@ -267,8 +267,8 @@ def show_onboarding():
                           value=int(cfg["ii_request_delay"]["min"]), key="wiz_dmin")
         col2.number_input("Request delay max (s)", min_value=0, max_value=60,
                           value=int(cfg["ii_request_delay"]["max"]), key="wiz_dmax")
-        col3.text_input("tradeCGT API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
-        st.text_input("tradeCGT API Key (optional — saves re-pasting each time)",
+        col3.text_input("Soren API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
+        st.text_input("Soren API Key (optional — saves re-pasting each time)",
                       value=cfg["cgt"].get("api_key", ""), key="wiz_cgt_key")
 
     # Render validation errors from previous submit attempt (above the button)
@@ -283,7 +283,7 @@ def show_onboarding():
         # Pull advanced settings
         cfg["ii_request_delay"]["min"] = st.session_state.get("wiz_dmin", 1)
         cfg["ii_request_delay"]["max"] = st.session_state.get("wiz_dmax", 3)
-        cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "http://localhost:8000")
+        cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "https://app.getsoren.app")
         key = st.session_state.get("wiz_cgt_key", "").strip()
         if key:
             cfg["cgt"]["api_key"] = key
@@ -377,7 +377,7 @@ for _key, _default in [
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_dl, tab_push, tab_cfg, tab_bm = st.tabs(["📥 Download", "📤 Push to tradeCGT", "⚙️ Config", "🔖 Bookmarklet"])
+tab_dl, tab_push, tab_cfg, tab_bm = st.tabs(["📥 Download", "📤 Push to Soren", "⚙️ Config", "🔖 Bookmarklet"])
 
 
 # ─── Download ─────────────────────────────────────────────────────────────────
@@ -407,13 +407,13 @@ with tab_dl:
 
     _cgt_key = config.get("cgt", {}).get("api_key", "")
     also_push = st.checkbox(
-        "Push to tradeCGT after download",
+        "Push to Soren after download",
         value=bool(_cgt_key),
         disabled=st.session_state.dl_running or not _cgt_key,
-        help=None if _cgt_key else "Add a tradeCGT API key in ⚙️ Config to enable this",
+        help=None if _cgt_key else "Add a Soren API key in ⚙️ Config to enable this",
     )
     if not _cgt_key:
-        st.info("💡 Add a tradeCGT API key in the **⚙️ Config** tab to enable pushing after download.")
+        st.info("💡 Add a Soren API key in the **⚙️ Config** tab to enable pushing after download.")
 
     with st.expander("Advanced options"):
         to_date = st.date_input(
@@ -501,7 +501,7 @@ with tab_dl:
 # ─── Push ─────────────────────────────────────────────────────────────────────
 
 with tab_push:
-    st.header("Push to tradeCGT")
+    st.header("Push to Soren")
 
     # Account dropdown — options from all users in config (deduped by ID)
     _push_acct_map = {"All": None}
@@ -514,7 +514,7 @@ with tab_push:
 
     _push_cgt_key = config.get("cgt", {}).get("api_key", "")
     if not _push_cgt_key:
-        st.info("💡 Add a tradeCGT API key in the **⚙️ Config** tab to enable pushing.")
+        st.info("💡 Add a Soren API key in the **⚙️ Config** tab to enable pushing.")
 
     _push_acct_sel = st.selectbox("Account", list(_push_acct_map.keys()),
                                   key="acct_push",
@@ -531,7 +531,7 @@ with tab_push:
         st.rerun()
 
     if st.session_state.push_running:
-        with st.status("Pushing to tradeCGT…", expanded=True) as status:
+        with st.status("Pushing to Soren…", expanded=True) as status:
             ok, log = run_and_stream(st.session_state.push_args, st.session_state.push_env)
             status.update(
                 label="Push complete ✓" if ok else "Push failed ✗",
@@ -598,12 +598,12 @@ with tab_cfg:
         key="cfg_delay_max",
     )
     col3.text_input(
-        "tradeCGT API URL",
+        "Soren API URL",
         value=cfg.get("cgt", {}).get("api_url", ""),
         key="cfg_cgt_url",
     )
     st.text_input(
-        "tradeCGT API Key",
+        "Soren API Key",
         value=cfg.get("cgt", {}).get("api_key", ""),
         key="cfg_cgt_key",
         help="Long-lived API key — stored in config.yaml (which is gitignored)",
