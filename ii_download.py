@@ -479,6 +479,38 @@ def cgt_fetch_account_map(api_url, cgt_token):
     return {a["accountNumber"]: a["id"] for a in accounts}
 
 
+def _infer_account_type(name):
+    """Infer Soren account_type from a friendly name string.
+
+    Matches 'SIPP' or 'ISA' (case-insensitive) anywhere in the name.
+    Falls back to 'GIA' for anything else (e.g. 'Trading', 'General').
+    """
+    upper = name.upper()
+    if "SIPP" in upper:
+        return "SIPP"
+    if "ISA" in upper:
+        return "ISA"
+    return "GIA"
+
+
+def cgt_create_account(api_url, cgt_token, account_number, name):
+    """Create a new account in Soren and return its id, or None on failure."""
+    account_type = _infer_account_type(name)
+    resp = requests.post(
+        f"{api_url}/api/accounts",
+        headers={"Authorization": f"Bearer {cgt_token}"},
+        json={"name": name, "account_type": account_type, "account_number": account_number},
+    )
+    if resp.status_code == 201:
+        return resp.json()["id"]
+    if resp.status_code == 409:
+        # Already exists (duplicate name or number) — re-fetch the map and try again
+        print(colour(f"    409 conflict creating account '{name}' ({account_number}) — already exists?", YELLOW))
+        return None
+    print(colour(f"    HTTP {resp.status_code} creating account '{name}': {resp.text[:300]}", RED))
+    return None
+
+
 def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id, debug=False):
     """Fetch list of already-uploaded files for a Soren account."""
     resp = requests.get(
@@ -591,7 +623,7 @@ def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, va
         return False
 
 
-def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
+def push_to_cgt(config, account_filter=None, user_emails=None, create_accounts=False, debug=False):
     """Push downloaded CSV files to the Soren API."""
     cgt_config = config.get("cgt", {})
     api_url = cgt_config.get("api_url")
@@ -647,8 +679,26 @@ def push_to_cgt(config, account_filter=None, user_emails=None, debug=False):
 
             cgt_id = account_map.get(ii_account_id)
             if cgt_id is None:
-                print(colour(f"  Account {ii_account_id}: no matching Soren account — skipping", YELLOW))
-                continue
+                if create_accounts:
+                    # Look up the friendly name for this account from config
+                    acct_name = ii_account_id  # fallback to ID
+                    for u in config.get("users", []):
+                        for a in u.get("accounts", []):
+                            if a["id"] == ii_account_id:
+                                acct_name = a.get("name", ii_account_id)
+                    acct_type = _infer_account_type(acct_name)
+                    print(f"  Account {ii_account_id} ({acct_name}): " +
+                          colour(f"not found in Soren — creating as {acct_type}...", YELLOW), end=" ")
+                    cgt_id = cgt_create_account(api_url, cgt_token, ii_account_id, acct_name)
+                    if cgt_id:
+                        account_map[ii_account_id] = cgt_id
+                        print(colour(f"created (id={cgt_id})", GREEN))
+                    else:
+                        print(colour("failed — skipping", RED))
+                        continue
+                else:
+                    print(colour(f"  Account {ii_account_id}: no matching Soren account — skipping", YELLOW))
+                    continue
 
             # Fetch what's already uploaded
             uploaded = cgt_fetch_uploaded_files(api_url, cgt_token, cgt_id, debug=debug)
@@ -825,6 +875,8 @@ def main():
     parser.add_argument("--to-date", type=str, help="Transaction end date (YYYY-MM-DD). Defaults to yesterday")
     parser.add_argument("--push", action="store_true", help="Push downloaded CSVs to Soren API")
     parser.add_argument("--push-only", action="store_true", help="Push to Soren without downloading first")
+    parser.add_argument("--create-accounts", action="store_true",
+                        help="Create missing Soren accounts automatically during push")
     parser.add_argument("--config", type=str, default=str(CONFIG_FILE), help="Path to config file")
     parser.add_argument("--debug", action="store_true", help="Print raw Soren API responses for debugging")
     args = parser.parse_args()
@@ -837,7 +889,9 @@ def main():
 
     # Push-only mode: skip downloads entirely
     if args.push_only:
-        push_to_cgt(config, args.account, debug=args.debug)
+        push_to_cgt(config, args.account,
+                    create_accounts=args.create_accounts,
+                    debug=args.debug)
         return
 
     do_portfolio = args.portfolio or (not args.portfolio and not args.transactions)
@@ -917,6 +971,7 @@ def main():
     if args.push:
         push_to_cgt(config, args.account,
                     user_emails=[u["email"] for u in users],
+                    create_accounts=args.create_accounts,
                     debug=args.debug)
 
     if had_errors:

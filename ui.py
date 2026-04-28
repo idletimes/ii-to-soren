@@ -406,11 +406,18 @@ with tab_dl:
     account_filter  = _dl_acct_map[_dl_acct_sel]
 
     _cgt_key = config.get("cgt", {}).get("api_key", "")
-    also_push = st.checkbox(
+    col_push, col_create = st.columns(2)
+    also_push = col_push.checkbox(
         "Push to Soren after download",
         value=bool(_cgt_key),
         disabled=st.session_state.dl_running or not _cgt_key,
         help=None if _cgt_key else "Add a Soren API key in ⚙️ Config to enable this",
+    )
+    dl_create_accounts = col_create.checkbox(
+        "Create missing Soren accounts",
+        value=True,
+        disabled=st.session_state.dl_running or not _cgt_key or not also_push,
+        help="If an account exists in your II config but not yet in Soren, create it automatically",
     )
     if not _cgt_key:
         st.info("💡 Add a Soren API key in the **⚙️ Config** tab to enable pushing after download.")
@@ -472,6 +479,8 @@ with tab_dl:
         common += ["--to-date", to_date.isoformat()]
         if also_push and _cgt_key:
             common += ["--push"]
+            if dl_create_accounts:
+                common += ["--create-accounts"]
         st.session_state.dl_user_tokens = _user_tokens
         st.session_state.dl_common_args = common
         st.session_state.dl_running = True
@@ -516,16 +525,26 @@ with tab_push:
     if not _push_cgt_key:
         st.info("💡 Add a Soren API key in the **⚙️ Config** tab to enable pushing.")
 
-    _push_acct_sel = st.selectbox("Account", list(_push_acct_map.keys()),
-                                  key="acct_push",
-                                  disabled=st.session_state.push_running)
+    col_acct_push, col_create_push = st.columns(2)
+    _push_acct_sel = col_acct_push.selectbox("Account", list(_push_acct_map.keys()),
+                                              key="acct_push",
+                                              disabled=st.session_state.push_running)
     account_filter_push = _push_acct_map[_push_acct_sel]
+    push_create_accounts = col_create_push.checkbox(
+        "Create missing Soren accounts",
+        value=True,
+        disabled=not _push_cgt_key or st.session_state.push_running,
+        help="If an account exists locally but not yet in Soren, create it automatically",
+        key="push_create_accounts",
+    )
 
     if st.button("▶ Push", type="primary",
                  disabled=not _push_cgt_key or st.session_state.push_running):
         st.session_state.push_args = ["--push-only"]
         if account_filter_push:
             st.session_state.push_args += ["--account", account_filter_push]
+        if push_create_accounts:
+            st.session_state.push_args += ["--create-accounts"]
         st.session_state.push_env = {}
         st.session_state.push_running = True
         st.rerun()
