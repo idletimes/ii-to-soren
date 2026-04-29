@@ -204,6 +204,10 @@ users:
         name: "Trading"
         start_date: "2023-06-01"
         currencies: ["GBP", "USD"]
+        # Optional: per-currency start dates (auto-populated by the setup wizard).
+        # Non-GBP currencies default to start_date if this is omitted.
+        currency_start_dates:
+          USD: "2024-03-15"
 
   - email: "bob@example.com"
     accounts:
@@ -221,6 +225,7 @@ users:
 | `users[].accounts[].id` | Yes | II account number (visible in the II URL) |
 | `users[].accounts[].start_date` | Yes | Earliest transaction date to fetch |
 | `users[].accounts[].currencies` | Yes | Currency codes for transaction statements |
+| `users[].accounts[].currency_start_dates` | No | Per-currency start date overrides (auto-populated by the setup wizard); non-GBP currencies fall back to `start_date` if omitted |
 | `users[].accounts[].name` | No | Friendly name shown in logs |
 | `users[].customer_id` | No | II customer ID — auto-extracted from JWT if omitted |
 | `ii_request_delay.min/max` | No | Throttle between API calls (seconds). Default: 1–3 |
@@ -229,7 +234,7 @@ users:
 
 ### Choosing a start date
 
-`start_date` controls how far back the tool fetches transaction history for each account. **When in doubt, set it earlier rather than later.**
+`start_date` controls how far back the tool fetches GBP transaction history for each account, and is also used as the default start for any non-GBP currency that doesn't have an entry in `currency_start_dates`. **When in doubt, set it earlier rather than later.**
 
 - If it's too early, you'll download a few extra empty or irrelevant rows — no harm done.
 - If it's too late, you'll permanently miss transactions that happened before it, which will produce incorrect CGT calculations.
@@ -243,7 +248,11 @@ A safe default is the date you opened the account (visible in your II account su
 - If you include a currency you've never transacted in, the downloaded file will just be empty — no harm done.
 - If you omit a currency you have transacted in, those transactions will be missing entirely from your CGT calculations.
 
-To check which currencies you need, log into II, go to **My ii → Statements**, and see which currency tabs appear for each account. Common values are `GBP` and `USD`.
+**Auto-detection:** you don't need to list foreign currencies manually. Each time the tool runs, it scans your downloaded GBP statement files for FX conversion rows (e.g. a row like `"9484 AUSTRALIAN DOLLAR .58 S Date 12/08/22"`) and automatically adds any newly found currencies to `account["currencies"]` with a derived start date (`first_conversion_date − 7 days`, but never earlier than `start_date`). The derived start dates are written into `currency_start_dates` in your config. You'll see a yellow log line for each auto-detected currency.
+
+The setup wizard also does this during initial discovery, so if you used the wizard your currencies and `currency_start_dates` will already be populated.
+
+To check which currencies you need manually, log into II, go to **My ii → Statements**, and see which currency tabs appear for each account. Common values are `GBP` and `USD`.
 
 ## Output structure
 
