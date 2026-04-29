@@ -11,6 +11,10 @@ from pathlib import Path
 import pytest
 
 from ii_download import (
+    II_ALL_CURRENCIES,
+    _account_friendly_name,
+    _add_2yr,
+    _subtract_2yr,
     build_year_chunks,
     ccy_from_tx_filename,
     cgt_should_skip_transaction,
@@ -319,3 +323,76 @@ class TestPartialDeletionCriterion:
         # That's correct: build_year_chunks will re-download 2025 as a proper locked
         # full-year file, then start a fresh 2026 partial.
         assert self._should_delete(date(2025, 12, 31), date(2026, 4, 27)) is True
+
+
+# ── Discovery helpers ─────────────────────────────────────────────────────────
+
+class TestIIAllCurrencies:
+    def test_contains_gbp(self):
+        assert "GBP" in II_ALL_CURRENCIES
+
+    def test_contains_all_nine(self):
+        assert set(II_ALL_CURRENCIES) == {"GBP", "USD", "CAD", "EUR", "HKD", "SGD", "AUD", "SEK", "CHF"}
+
+    def test_gbp_is_first(self):
+        assert II_ALL_CURRENCIES[0] == "GBP"
+
+
+class TestSubtract2yr:
+    def test_normal_date(self):
+        assert _subtract_2yr(date(2026, 4, 28)) == date(2024, 4, 28)
+
+    def test_jan_1(self):
+        assert _subtract_2yr(date(2026, 1, 1)) == date(2024, 1, 1)
+
+    def test_dec_31(self):
+        assert _subtract_2yr(date(2025, 12, 31)) == date(2023, 12, 31)
+
+    def test_feb_29_leap_year(self):
+        # 2024 is a leap year; 2022 is not → clamp to Feb 28
+        assert _subtract_2yr(date(2024, 2, 29)) == date(2022, 2, 28)
+
+    def test_feb_28_non_leap(self):
+        assert _subtract_2yr(date(2026, 2, 28)) == date(2024, 2, 28)
+
+
+class TestAdd2yr:
+    def test_normal_date(self):
+        assert _add_2yr(date(2024, 4, 28)) == date(2026, 4, 28)
+
+    def test_feb_29_leap(self):
+        # 2024-02-29 + 2yr = 2026-02-28 (2026 not a leap year)
+        assert _add_2yr(date(2024, 2, 29)) == date(2026, 2, 28)
+
+    def test_jan_1(self):
+        assert _add_2yr(date(2020, 1, 1)) == date(2022, 1, 1)
+
+
+class TestAccountFriendlyName:
+    def test_isa(self):
+        assert _account_friendly_name("ISA", "MR H BLUNDUN", False) == "ISA"
+
+    def test_sipp(self):
+        assert _account_friendly_name("SIPP", "MR H BLUNDUN", False) == "SIPP"
+
+    def test_trading(self):
+        assert _account_friendly_name("TRADING", "MR H BLUNDUN", False) == "Trading"
+
+    def test_junior_isa_with_initial(self):
+        # "MASTER Z BLUNDUN" → "Junior ISA (Z)"
+        assert _account_friendly_name("JUNIOR_ISA", "MASTER Z BLUNDUN", True) == "Junior ISA (Z)"
+
+    def test_junior_isa_second_child(self):
+        # "MISS S BLUNDUN" → "Junior ISA (S)"
+        assert _account_friendly_name("JUNIOR_ISA", "MISS S BLUNDUN", True) == "Junior ISA (S)"
+
+    def test_junior_isa_not_child(self):
+        # If childAccount is False, no name disambiguation
+        assert _account_friendly_name("JUNIOR_ISA", "MASTER Z BLUNDUN", False) == "Junior ISA"
+
+    def test_unknown_type_falls_back_to_title_case(self):
+        assert _account_friendly_name("STOCKS_AND_SHARES", "MR H BLUNDUN", False) == "Stocks And Shares"
+
+    def test_single_word_holder_no_crash(self):
+        # Holder name with only one word — should not crash, no disambiguation
+        assert _account_friendly_name("JUNIOR_ISA", "BLUNDUN", True) == "Junior ISA"

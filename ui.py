@@ -2,6 +2,7 @@
 """Streamlit UI for ii-to-soren."""
 
 import copy
+import json
 import os
 import re
 import subprocess
@@ -209,8 +210,90 @@ def show_onboarding():
                 acct["start_date"] = st.session_state.get(f"wu{i}_a{j}_start", acct["start_date"])
                 acct["currencies"] = st.session_state.get(f"wu{i}_a{j}_cur", acct["currencies"])
 
-    # ── Users ─────────────────────────────────────────────────────────────────
+    # ── Auto-discovery ────────────────────────────────────────────────────────
     st.subheader("Your Interactive Investor Accounts")
+
+    with st.expander("✨ Auto-discover accounts (recommended)", expanded=not st.session_state.get("wiz_disc_done")):
+        st.markdown(
+            "Paste your II bearer token to automatically discover your accounts, "
+            "start dates, and currencies — no manual config needed. "
+            "Takes about 1–2 minutes."
+        )
+        st.caption(
+            "Don't have a token yet? Use the **🔖 Bookmarklet** tab after setup, "
+            "or grab one manually: log into ii.co.uk → DevTools → Network → any "
+            "request to api-prod.ii.co.uk → copy the Authorization header."
+        )
+
+        col_tok, col_btn = st.columns([5, 1])
+        col_tok.text_input(
+            "II Bearer Token",
+            key="wiz_discover_token",
+            placeholder="eyJhbGci...",
+            label_visibility="collapsed",
+        )
+        disc_clicked = col_btn.button("🔍 Discover", type="primary", key="wiz_disc_btn")
+
+        if disc_clicked:
+            if not st.session_state.get("wiz_discover_token", "").strip():
+                st.error("Paste your II bearer token above first.")
+            else:
+                st.session_state["wiz_disc_running"] = True
+                st.rerun()
+
+        # ── Run discovery subprocess ──────────────────────────────────────────
+        if st.session_state.get("wiz_disc_running"):
+            _disc_token = st.session_state.get("wiz_discover_token", "").strip()
+            with st.status("Discovering accounts from Interactive Investor…", expanded=True) as _disc_status:
+                _ok, _log = run_and_stream(["--discover", "--token", _disc_token])
+                _discovered = None
+                for _line in _log.splitlines():
+                    _clean = strip_ansi(_line).strip()
+                    if _clean.startswith("DISCOVERED:"):
+                        try:
+                            _discovered = json.loads(_clean[len("DISCOVERED:"):])
+                        except Exception:
+                            pass
+                        break
+                if _discovered and _ok:
+                    _disc_status.update(
+                        label=f"✓ Found {len(_discovered)} account(s)", state="complete"
+                    )
+                else:
+                    _disc_status.update(label="✗ Discovery failed — check token", state="error")
+
+            # Outside the status block — update state and repopulate form
+            st.session_state["wiz_disc_running"] = False
+            if _discovered and _ok:
+                # Clear any previously-rendered account widget values so the
+                # form re-renders with the discovered data on the next run
+                for _j in range(20):
+                    for _sfx in ["name", "id", "start", "cur"]:
+                        st.session_state.pop(f"wu0_a{_j}_{_sfx}", None)
+                cfg["users"][0]["accounts"] = [
+                    {
+                        "id": a["id"],
+                        "name": a["name"],
+                        "start_date": a["start_date"],
+                        "currencies": a["currencies"],
+                    }
+                    for a in _discovered
+                ]
+                st.session_state["wiz_disc_done"] = True
+            st.rerun()
+
+        # ── Post-discovery status message ─────────────────────────────────────
+        if st.session_state.get("wiz_disc_done"):
+            n = len(cfg["users"][0].get("accounts", []))
+            st.success(
+                f"✓ {n} account(s) discovered and pre-filled below. "
+                "Review them, enter your email, then click **Create Config**."
+            )
+            if st.button("🔄 Re-discover", key="wiz_redisc"):
+                st.session_state["wiz_disc_done"] = False
+                st.session_state["wiz_disc_running"] = True
+                st.rerun()
+
     st.caption("Add each II login you want to include.")
 
     for i, user in enumerate(cfg["users"]):

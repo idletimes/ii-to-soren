@@ -24,7 +24,9 @@ CONFIG_FILE = Path("config.yaml")
 #
 # All requests require:
 #   Authorization: Bearer <token>   (short-lived JWT, ~28 min, obtained via browser)
-#   accept: application/json        (except the PDF download, which needs application/pdf)
+#   ii-consumer-type: web.secure
+#   origin: https://www.ii.co.uk
+#   accept: application/json        (except CSV/PDF downloads)
 #
 # Variables:
 #   {cid}  — customer ID (extracted from JWT claim https://onestack.co.uk/cid)
@@ -32,19 +34,27 @@ CONFIG_FILE = Path("config.yaml")
 #   {ccy}  — currency code (e.g. "GBP", "USD")
 #   {did}  — document ID (integer, from the summaries list)
 #
+# 0. Account list (JSON)
+#    GET /1/customers/{cid}/accounts
+#    → JSON; all open accounts with IDs, types, and holder names
+#    → Used for auto-discovery; returns accountId, accountTypeMeta.accountType,
+#      accountTypeMeta.friendlyType, name (holder), open, childAccount
+#
 # 1. Portfolio snapshot (CSV)
 #    GET /2/customers/{cid}/accounts/{aid}/portfolio/export
 #    → CSV of current holdings
 #
 # 2. Cash balance (JSON)
 #    GET /2/customers/{cid}/accounts/{aid}/portfolio
-#    → JSON; cash extracted from response["account"]["totalCashValue"] / ["currency"]
+#    → JSON; cash extracted from response["total"]["totalCashValue"] / ["currency"]
 #
-# 3. Transaction statement (CSV)
+# 3. Transaction statement (CSV or JSON)
 #    GET /1/customers/{cid}/accounts/{aid}/statements/{ccy}
 #        ?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD
 #        &sortBy=TRANSACTION_DATE&sortOrder=DESCENDING
-#    → CSV of transactions for the given currency and date range
+#    → CSV (accept: text/csv) or JSON (accept: application/json)
+#    → Maximum date range: 24 months (returns 400 TIME_PERIOD_EXCEED_24_MONTHS if exceeded)
+#    → JSON results include: transactionDate, description, amount, currency.code, …
 #
 # 4. Corporate action notification summaries (JSON, paginated)
 #    GET /1/customers/{cid}/accounts/{aid}/document-CORPORATE_ACTION_NOTIFICATIONS-summaries
@@ -58,6 +68,10 @@ CONFIG_FILE = Path("config.yaml")
 #    → Raw PDF bytes
 #
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Complete list of currencies supported by II's transaction statements.
+# Matches the dropdown on https://www.ii.co.uk/secure/transactions.
+II_ALL_CURRENCIES = ["GBP", "USD", "CAD", "EUR", "HKD", "SGD", "AUD", "SEK", "CHF"]
 
 # ANSI colours
 GREEN = "\033[92m"
@@ -151,6 +165,255 @@ def make_headers(token):
         "origin": "https://www.ii.co.uk",
         "referer": "https://www.ii.co.uk/",
     }
+
+
+# ── Account auto-discovery ────────────────────────────────────────────────────
+
+def ii_fetch_accounts(customer_id, token):
+    """Fetch all open accounts for a customer.
+
+    GET /enrolled/api/1/customers/{cid}/accounts
+
+    Returns a list of dicts with keys:
+        accountId, accountType, friendlyType, holderName, childAccount
+    Returns None on API error.
+    """
+    url = f"{BASE_URL}/1/customers/{customer_id}/accounts"
+    headers = {**make_headers(token), "accept": "application/json"}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        return None
+    results = []
+    for acct in resp.json().get("results", []):
+        if not acct.get("open", True):
+            continue
+        meta = acct.get("accountTypeMeta", {})
+        results.append({
+            "accountId": acct["accountId"],
+            "accountType": meta.get("accountType", ""),
+            "friendlyType": meta.get("friendlyType", ""),
+            "holderName": acct.get("name", ""),
+            "childAccount": meta.get("childAccount", False),
+        })
+    return results
+
+
+def _account_friendly_name(account_type, holder_name, child_account):
+    """Generate a friendly display name for an II account.
+
+    Child accounts (Junior ISAs) are distinguished by the holder's first name/initial,
+    e.g. "Junior ISA (Z)" and "Junior ISA (S)" for two JISAs on the same login.
+    """
+    _TYPE_NAMES = {
+        "ISA": "ISA",
+        "SIPP": "SIPP",
+        "JUNIOR_ISA": "Junior ISA",
+        "TRADING": "Trading",
+        "PENSION": "Pension",
+    }
+    base = _TYPE_NAMES.get(account_type, account_type.replace("_", " ").title())
+    if child_account and holder_name:
+        parts = holder_name.split()
+        if len(parts) >= 2:
+            # "MASTER Z BLUNDUN" → "Z", "MISS S BLUNDUN" → "S"
+            return f"{base} ({parts[1].title()})"
+    return base
+
+
+def _subtract_2yr(d):
+    """Return d minus exactly 2 years, handling Feb 29."""
+    try:
+        return d.replace(year=d.year - 2)
+    except ValueError:
+        return d.replace(year=d.year - 2, day=28)
+
+
+def _add_2yr(d):
+    """Return d plus exactly 2 years, handling Feb 29."""
+    try:
+        return d.replace(year=d.year + 2)
+    except ValueError:
+        return d.replace(year=d.year + 2, day=28)
+
+
+def _count_statements(customer_id, account_id, ccy, from_date, to_date, token):
+    """Count transaction rows for a currency/window via the JSON statements endpoint.
+
+    Returns the row count (int ≥ 0) or -1 on HTTP error.
+    The statements API enforces a 24-month maximum window.
+    """
+    url = (
+        f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
+        f"/statements/{ccy}"
+        f"?fromDate={from_date.isoformat()}&toDate={to_date.isoformat()}"
+        f"&sortBy=TRANSACTION_DATE&sortOrder=ASCENDING"
+    )
+    resp = requests.get(url, headers={**make_headers(token), "accept": "application/json"})
+    if resp.status_code != 200:
+        return -1
+    results = resp.json().get("results", [])
+    return len(results) if isinstance(results, list) else -1
+
+
+def ii_discover_start_date(customer_id, account_id, token, today, throttle_s=0.5, progress_fn=None):
+    """Find the earliest GBP transaction date for an account.
+
+    Walks backwards through successive 2-year windows until a window with no
+    transactions is found.  Then fetches the first transaction in the earliest
+    non-empty window (ASCENDING sort) to get the exact date.
+
+    Returns date(year, month, 1) — floored to the first of the month — so that
+    the resulting start_date is a clean config value.  Returns None if the
+    account has no GBP history at all.
+    """
+    chunk_end = today
+    earliest_window = None  # (start, end) of the earliest confirmed non-empty window
+
+    while True:
+        # Each window is exactly 2 years wide (≤ 24 months — respects API limit)
+        chunk_start = _subtract_2yr(chunk_end)
+        if chunk_start < date(2000, 1, 1):
+            chunk_start = date(2000, 1, 1)
+
+        if progress_fn:
+            progress_fn(f"    GBP {chunk_start} → {chunk_end} ...")
+
+        count = _count_statements(customer_id, account_id, "GBP", chunk_start, chunk_end, token)
+        time.sleep(throttle_s)
+
+        if count > 0:
+            earliest_window = (chunk_start, chunk_end)
+
+        if count == 0 or chunk_start == date(2000, 1, 1):
+            break  # empty window found, or hit the 2000 floor
+
+        chunk_end = chunk_start - timedelta(days=1)
+
+    if earliest_window is None:
+        return None  # no GBP history
+
+    # Fetch the exact first transaction in the earliest non-empty window
+    win_start, win_end = earliest_window
+    url = (
+        f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
+        f"/statements/GBP"
+        f"?fromDate={win_start.isoformat()}&toDate={win_end.isoformat()}"
+        f"&sortBy=TRANSACTION_DATE&sortOrder=ASCENDING"
+    )
+    resp = requests.get(url, headers={**make_headers(token), "accept": "application/json"})
+    time.sleep(throttle_s)
+
+    if resp.status_code == 200:
+        results = resp.json().get("results", [])
+        if results:
+            tx_date = date.fromisoformat(results[0]["transactionDate"])
+            return tx_date.replace(day=1)  # floor to first of month
+
+    return win_start  # fallback: start of the earliest window
+
+
+def ii_discover_currencies(customer_id, account_id, token, start_date, today, throttle_s=0.5, progress_fn=None):
+    """Find which currencies have transaction history for an account.
+
+    GBP is always included.  Each of the other 8 II-supported currencies is
+    probed in up to two 2-year windows:
+        Window A  start_date → start_date+2yr  (catches early-history currencies)
+        Window B  today-2yr  → today           (catches currencies adopted later)
+
+    The two windows may overlap for recently-opened accounts, in which case
+    only one probe per currency is made.
+
+    Returns a list sorted with GBP first, then the rest alphabetically.
+    """
+    found = {"GBP"}
+    non_gbp = [c for c in II_ALL_CURRENCIES if c != "GBP"]
+
+    win_a_end = min(_add_2yr(start_date), today)
+    win_b_start = _subtract_2yr(today)
+
+    windows = [(start_date, win_a_end)]
+    if win_b_start > win_a_end:
+        windows.append((win_b_start, today))
+
+    for ccy in non_gbp:
+        for from_d, to_d in windows:
+            if progress_fn:
+                progress_fn(f"    {ccy} {from_d} → {to_d} ...")
+            count = _count_statements(customer_id, account_id, ccy, from_d, to_d, token)
+            time.sleep(throttle_s)
+            if count > 0:
+                found.add(ccy)
+                break  # no need to check the second window
+
+    return ["GBP"] + sorted(found - {"GBP"})
+
+
+def ii_discover_config(customer_id, token, throttle_s=0.5, progress_fn=None, today=None):
+    """Discover all accounts, start dates, and currencies for a customer.
+
+    Calls ii_fetch_accounts, then for each account runs ii_discover_start_date
+    and ii_discover_currencies.
+
+    Returns (accounts, error_msg).
+    On success: accounts is a list of config-ready dicts, error_msg is None.
+    On failure: accounts is None, error_msg is a string.
+    """
+    if today is None:
+        today = date.today()
+
+    if progress_fn:
+        progress_fn("Fetching account list...")
+
+    accounts = ii_fetch_accounts(customer_id, token)
+    if accounts is None:
+        return None, "Failed to fetch account list from the II API"
+    if not accounts:
+        return None, "No open accounts found for this customer"
+
+    if progress_fn:
+        progress_fn(f"Found {len(accounts)} account(s)")
+
+    result = []
+    for i, acct in enumerate(accounts):
+        aid = acct["accountId"]
+        friendly = _account_friendly_name(
+            acct["accountType"], acct["holderName"], acct["childAccount"]
+        )
+
+        if progress_fn:
+            progress_fn(f"\n[{i + 1}/{len(accounts)}] {friendly} ({aid})")
+            progress_fn("  Finding start date...")
+
+        start_date = ii_discover_start_date(
+            customer_id, aid, token, today, throttle_s, progress_fn
+        )
+
+        if start_date is None:
+            start_date = today.replace(day=1)
+            if progress_fn:
+                progress_fn(f"  No history — using {start_date} as start date")
+        else:
+            if progress_fn:
+                progress_fn(f"  Start date: {start_date}")
+
+        if progress_fn:
+            progress_fn("  Checking currencies...")
+
+        currencies = ii_discover_currencies(
+            customer_id, aid, token, start_date, today, throttle_s, progress_fn
+        )
+
+        if progress_fn:
+            progress_fn(f"  Currencies: {', '.join(currencies)}")
+
+        result.append({
+            "id": aid,
+            "name": friendly,
+            "start_date": start_date.isoformat(),
+            "currencies": currencies,
+        })
+
+    return result, None
 
 
 def download_portfolio(customer_id, account, token, user_dir, config):
@@ -863,6 +1126,55 @@ def resolve_users(config, user_filter):
     return users
 
 
+def _handle_discover(args):
+    """Run account auto-discovery from the CLI (--discover mode).
+
+    Does not need a config.yaml — designed for first-time setup.
+    Prints progress to stdout, then prints a machine-readable
+    DISCOVERED:<json> line at the end for the Streamlit UI to parse.
+    """
+    token = args.token
+    if not token:
+        token = getpass.getpass("Paste II Bearer token: ").strip()
+    token = token.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:]
+
+    exp = decode_jwt_exp(token)
+    if exp and exp < datetime.now():
+        print(colour(f"Token expired at {exp.strftime('%H:%M:%S')} — please get a fresh one.", RED))
+        sys.exit(1)
+
+    customer_id = decode_jwt_customer_id(token)
+    if not customer_id:
+        print(colour("Could not extract customer ID from token — is it a valid II JWT?", RED))
+        sys.exit(1)
+
+    print(colour(f"Customer ID: {customer_id}", GREEN))
+    print()
+
+    accounts, error = ii_discover_config(
+        customer_id, token,
+        throttle_s=0.5,
+        progress_fn=lambda msg: print(msg),
+    )
+
+    if error:
+        print(colour(f"\nDiscovery failed: {error}", RED))
+        sys.exit(1)
+
+    print()
+    print(colour("─" * 60, BOLD))
+    print(colour(" Discovered accounts", BOLD))
+    print(colour("─" * 60, BOLD))
+    for a in accounts:
+        ccys = ", ".join(a["currencies"])
+        print(f"  {a['name']:20s} ({a['id']})  start: {a['start_date']}  currencies: {ccys}")
+
+    # Machine-readable line for the Streamlit UI to parse
+    print(f"\nDISCOVERED:{json.dumps(accounts)}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Download CSV files from Interactive Investor (ii.co.uk)"
@@ -877,9 +1189,16 @@ def main():
     parser.add_argument("--push-only", action="store_true", help="Push to Soren without downloading first")
     parser.add_argument("--create-accounts", action="store_true",
                         help="Create missing Soren accounts automatically during push")
+    parser.add_argument("--discover", action="store_true",
+                        help="Auto-discover accounts, start dates, and currencies from II API (no config needed)")
     parser.add_argument("--config", type=str, default=str(CONFIG_FILE), help="Path to config file")
     parser.add_argument("--debug", action="store_true", help="Print raw Soren API responses for debugging")
     args = parser.parse_args()
+
+    # Discover mode runs without a config file — used for first-time setup
+    if args.discover:
+        _handle_discover(args)
+        return
 
     config = load_config(Path(args.config))
 
