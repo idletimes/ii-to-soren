@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import csv
 import getpass
 import json
 import os
@@ -72,6 +73,84 @@ CONFIG_FILE = Path("config.yaml")
 # Complete list of currencies supported by II's transaction statements.
 # Matches the dropdown on https://www.ii.co.uk/secure/transactions.
 II_ALL_CURRENCIES = ["GBP", "USD", "CAD", "EUR", "HKD", "SGD", "AUD", "SEK", "CHF"]
+
+# Compiled regex patterns that match FX conversion descriptions in GBP statement files.
+# When GBP is converted to/from another currency, a row like this appears in the GBP CSV:
+#   "9484 AUSTRALIAN DOLLAR          .58 S Date 12/08/22"
+#   "7637 U.S. DOLLARS               .83 S Date 12/08/22"
+#   "44.69 EURO NoTf     .81 S Date 03/12/24"
+# Word-boundary anchors prevent false positives (e.g. "EUROPEAN" ≠ "EURO").
+_GBP_CCY_PATTERNS = [
+    (re.compile(r"\bU\.S\.\s*DOLLARS?\b"),    "USD"),
+    (re.compile(r"\bEUROS?\b"),               "EUR"),
+    (re.compile(r"\bAUSTRALIAN\s+DOLLARS?\b"), "AUD"),
+    (re.compile(r"\bCANADIAN\s+DOLLARS?\b"),   "CAD"),
+    (re.compile(r"\bHONG\s+KONG\s+DOLLARS?\b"), "HKD"),
+    (re.compile(r"\bSINGAPORE\s+DOLLARS?\b"),  "SGD"),
+    (re.compile(r"\bSWEDISH\s+KRONA\b"),       "SEK"),
+    (re.compile(r"\bSWISS\s+FRANCS?\b"),       "CHF"),
+]
+
+
+def detect_currencies_from_gbp_csv(csv_text):
+    """Scan a GBP transaction CSV for FX conversion entries.
+
+    Parses the Description column (index 6) of a GBP statement CSV looking for
+    foreign-currency conversion rows such as:
+        "9484 AUSTRALIAN DOLLAR          .58 S Date 12/08/22"
+        "44.69 EURO NoTf     .81 S Date 03/12/24"
+
+    The CSV date column (index 0) uses DD/MM/YYYY format.
+
+    Returns dict mapping currency_code → earliest transaction date (date object)
+    for each non-GBP currency detected.  Empty dict if none found.
+    """
+    found = {}
+    reader = csv.reader(csv_text.splitlines())
+    header_skipped = False
+    for row in reader:
+        if not header_skipped:
+            header_skipped = True
+            continue
+        if len(row) < 7:
+            continue
+        date_str = row[0].strip()
+        desc = row[6].strip()
+        try:
+            tx_date = datetime.strptime(date_str, "%d/%m/%Y").date()
+        except ValueError:
+            continue
+        for pattern, ccy_code in _GBP_CCY_PATTERNS:
+            if pattern.search(desc):
+                if ccy_code not in found or tx_date < found[ccy_code]:
+                    found[ccy_code] = tx_date
+                break  # one pattern match per row is enough
+    return found
+
+
+def detect_currencies_from_gbp_rows(rows):
+    """Scan GBP statement JSON rows (from the II API) for FX conversion entries.
+
+    Each row is a dict with at least 'transactionDate' (YYYY-MM-DD ISO string)
+    and 'description'.
+
+    Returns dict mapping currency_code → earliest transaction date (date object)
+    for each non-GBP currency detected.  Empty dict if none found.
+    """
+    found = {}
+    for row in rows:
+        desc = row.get("description", "")
+        try:
+            tx_date = date.fromisoformat(row["transactionDate"])
+        except (KeyError, ValueError):
+            continue
+        for pattern, ccy_code in _GBP_CCY_PATTERNS:
+            if pattern.search(desc):
+                if ccy_code not in found or tx_date < found[ccy_code]:
+                    found[ccy_code] = tx_date
+                break
+    return found
+
 
 # ANSI colours
 GREEN = "\033[92m"
@@ -236,123 +315,100 @@ def _add_2yr(d):
         return d.replace(year=d.year + 2, day=28)
 
 
-def _count_statements(customer_id, account_id, ccy, from_date, to_date, token):
-    """Count transaction rows for a currency/window via the JSON statements endpoint.
+def _fetch_gbp_window_rows(customer_id, account_id, from_date, to_date, token):
+    """Fetch GBP transaction rows for a date window via the JSON statements endpoint.
 
-    Returns the row count (int ≥ 0) or -1 on HTTP error.
-    The statements API enforces a 24-month maximum window.
+    Returns a list of row dicts (possibly empty) or None on HTTP error.
+    The window must be ≤ 24 months (API limit).
     """
     url = (
         f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
-        f"/statements/{ccy}"
+        f"/statements/GBP"
         f"?fromDate={from_date.isoformat()}&toDate={to_date.isoformat()}"
-        f"&sortBy=TRANSACTION_DATE&sortOrder=ASCENDING"
+        f"&sortBy=TRANSACTION_DATE&sortOrder=DESCENDING"
     )
     resp = requests.get(url, headers={**make_headers(token), "accept": "application/json"})
     if resp.status_code != 200:
-        return -1
+        return None
     results = resp.json().get("results", [])
-    return len(results) if isinstance(results, list) else -1
+    return results if isinstance(results, list) else None
 
 
-def ii_discover_start_date(customer_id, account_id, token, today, throttle_s=0.5, progress_fn=None):
-    """Find the earliest GBP transaction date for an account.
+def ii_discover_account_history(customer_id, account_id, token, today, throttle_s=0.5, progress_fn=None):
+    """Fetch complete GBP transaction history and detect foreign currencies in use.
 
-    Walks backwards through successive 2-year windows until a window with no
-    transactions is found.  Then fetches the first transaction in the earliest
-    non-empty window (ASCENDING sort) to get the exact date.
+    Walks backwards through successive 2-year windows fetching full JSON rows
+    until an empty window is found (or the year-2000 floor is reached).  All
+    rows from non-empty windows are scanned for FX conversion descriptions to
+    detect non-GBP currencies.
 
-    Returns date(year, month, 1) — floored to the first of the month — so that
-    the resulting start_date is a clean config value.  Returns None if the
-    account has no GBP history at all.
+    This replaces the older approach of:
+      - making a count call per window, then a separate full fetch for the
+        earliest window
+      - probing each of the 8 non-GBP currencies in two windows apiece
+    resulting in significantly fewer API calls.
+
+    Returns:
+        (start_date, ccy_detections)
+    where:
+        start_date     – date(year, month, 1) of the first GBP transaction,
+                          floored to the first of the month; None if no history.
+        ccy_detections – {ccy_code: earliest_conversion_date} parsed from the
+                          GBP description column.  Empty dict if none found.
     """
     chunk_end = today
-    earliest_window = None  # (start, end) of the earliest confirmed non-empty window
+    all_rows = []
+    earliest_date = None
 
     while True:
-        # Each window is exactly 2 years wide (≤ 24 months — respects API limit)
         chunk_start = _subtract_2yr(chunk_end)
         if chunk_start < date(2000, 1, 1):
             chunk_start = date(2000, 1, 1)
 
         if progress_fn:
-            progress_fn(f"    GBP {chunk_start} → {chunk_end} ...")
+            progress_fn(f"    {chunk_start} → {chunk_end} ...")
 
-        count = _count_statements(customer_id, account_id, "GBP", chunk_start, chunk_end, token)
+        rows = _fetch_gbp_window_rows(customer_id, account_id, chunk_start, chunk_end, token)
         time.sleep(throttle_s)
 
-        if count > 0:
-            earliest_window = (chunk_start, chunk_end)
+        if rows is None:
+            if progress_fn:
+                progress_fn("    (API error — stopping walk-back)")
+            break
 
-        if count == 0 or chunk_start == date(2000, 1, 1):
-            break  # empty window found, or hit the 2000 floor
+        if rows:
+            all_rows.extend(rows)
+            for row in rows:
+                try:
+                    tx_date = date.fromisoformat(row["transactionDate"])
+                    if earliest_date is None or tx_date < earliest_date:
+                        earliest_date = tx_date
+                except (KeyError, ValueError):
+                    pass
+
+        if not rows or chunk_start == date(2000, 1, 1):
+            break  # empty window — account predates this chunk (or hit 2000 floor)
 
         chunk_end = chunk_start - timedelta(days=1)
 
-    if earliest_window is None:
-        return None  # no GBP history
+    if earliest_date is None:
+        return None, {}
 
-    # Fetch the exact first transaction in the earliest non-empty window
-    win_start, win_end = earliest_window
-    url = (
-        f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
-        f"/statements/GBP"
-        f"?fromDate={win_start.isoformat()}&toDate={win_end.isoformat()}"
-        f"&sortBy=TRANSACTION_DATE&sortOrder=ASCENDING"
-    )
-    resp = requests.get(url, headers={**make_headers(token), "accept": "application/json"})
-    time.sleep(throttle_s)
-
-    if resp.status_code == 200:
-        results = resp.json().get("results", [])
-        if results:
-            tx_date = date.fromisoformat(results[0]["transactionDate"])
-            return tx_date.replace(day=1)  # floor to first of month
-
-    return win_start  # fallback: start of the earliest window
-
-
-def ii_discover_currencies(customer_id, account_id, token, start_date, today, throttle_s=0.5, progress_fn=None):
-    """Find which currencies have transaction history for an account.
-
-    GBP is always included.  Each of the other 8 II-supported currencies is
-    probed in up to two 2-year windows:
-        Window A  start_date → start_date+2yr  (catches early-history currencies)
-        Window B  today-2yr  → today           (catches currencies adopted later)
-
-    The two windows may overlap for recently-opened accounts, in which case
-    only one probe per currency is made.
-
-    Returns a list sorted with GBP first, then the rest alphabetically.
-    """
-    found = {"GBP"}
-    non_gbp = [c for c in II_ALL_CURRENCIES if c != "GBP"]
-
-    win_a_end = min(_add_2yr(start_date), today)
-    win_b_start = _subtract_2yr(today)
-
-    windows = [(start_date, win_a_end)]
-    if win_b_start > win_a_end:
-        windows.append((win_b_start, today))
-
-    for ccy in non_gbp:
-        for from_d, to_d in windows:
-            if progress_fn:
-                progress_fn(f"    {ccy} {from_d} → {to_d} ...")
-            count = _count_statements(customer_id, account_id, ccy, from_d, to_d, token)
-            time.sleep(throttle_s)
-            if count > 0:
-                found.add(ccy)
-                break  # no need to check the second window
-
-    return ["GBP"] + sorted(found - {"GBP"})
+    start_date = earliest_date.replace(day=1)  # floor to first of month
+    ccy_detections = detect_currencies_from_gbp_rows(all_rows)
+    return start_date, ccy_detections
 
 
 def ii_discover_config(customer_id, token, throttle_s=0.5, progress_fn=None, today=None):
     """Discover all accounts, start dates, and currencies for a customer.
 
-    Calls ii_fetch_accounts, then for each account runs ii_discover_start_date
-    and ii_discover_currencies.
+    For each open account, walks back through the full GBP statement history,
+    determines the earliest transaction date (→ start_date), and scans all GBP
+    descriptions for FX conversion entries (→ currencies + per-currency start dates).
+
+    Non-GBP currencies are assigned a start date of first_conversion_date − 7 days
+    (safety buffer in case a security purchase precedes the FX conversion in the GBP
+    file), but never earlier than the account's GBP start_date.
 
     Returns (accounts, error_msg).
     On success: accounts is a list of config-ready dicts, error_msg is None.
@@ -382,9 +438,9 @@ def ii_discover_config(customer_id, token, throttle_s=0.5, progress_fn=None, tod
 
         if progress_fn:
             progress_fn(f"\n[{i + 1}/{len(accounts)}] {friendly} ({aid})")
-            progress_fn("  Finding start date...")
+            progress_fn("  Scanning GBP history for start date and currencies...")
 
-        start_date = ii_discover_start_date(
+        start_date, ccy_detections = ii_discover_account_history(
             customer_id, aid, token, today, throttle_s, progress_fn
         )
 
@@ -396,24 +452,149 @@ def ii_discover_config(customer_id, token, throttle_s=0.5, progress_fn=None, tod
             if progress_fn:
                 progress_fn(f"  Start date: {start_date}")
 
-        if progress_fn:
-            progress_fn("  Checking currencies...")
-
-        currencies = ii_discover_currencies(
-            customer_id, aid, token, start_date, today, throttle_s, progress_fn
-        )
+        # Build currency list and per-currency start dates.
+        # GBP always uses the account start_date.
+        # Each non-GBP currency starts 7 days before its first FX conversion,
+        # but never earlier than the account's GBP start_date.
+        currencies = ["GBP"] + sorted(ccy_detections.keys())
+        ccy_start_dates = {}
+        for ccy_code, first_conversion in ccy_detections.items():
+            ccy_start = max(first_conversion - timedelta(days=7), start_date)
+            ccy_start_dates[ccy_code] = ccy_start.isoformat()
 
         if progress_fn:
             progress_fn(f"  Currencies: {', '.join(currencies)}")
+            for ccy, sd in ccy_start_dates.items():
+                progress_fn(f"    {ccy} starts from {sd}")
 
-        result.append({
+        acct_dict = {
             "id": aid,
             "name": friendly,
             "start_date": start_date.isoformat(),
             "currencies": currencies,
-        })
+        }
+        if ccy_start_dates:
+            acct_dict["currency_start_dates"] = ccy_start_dates
+
+        result.append(acct_dict)
 
     return result, None
+
+
+def scan_and_update_currencies(account, account_dir):
+    """Scan on-disk GBP CSVs for FX entries; add new currencies to account config.
+
+    Reads every GBP transaction CSV in account_dir and detects foreign-currency
+    conversion rows (e.g. "9484 AUSTRALIAN DOLLAR .58 S Date 12/08/22").
+
+    Any currency not already listed in account['currencies'] is added with:
+        start_date = first_conversion_date − 7 days
+    (safety buffer in case a security purchase precedes the FX conversion),
+    but never earlier than the account's own start_date.
+
+    Mutates account in-place by updating account['currencies'] and
+    account['currency_start_dates'].
+
+    Returns a list of newly added currency codes (empty list if none).
+    """
+    gbp_files = find_transaction_files(account_dir, "GBP")
+    all_detections = {}  # ccy_code → earliest conversion date across all files
+
+    for fpath, _, _, _ in gbp_files:
+        try:
+            csv_text = fpath.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for ccy, dt in detect_currencies_from_gbp_csv(csv_text).items():
+            if ccy not in all_detections or dt < all_detections[ccy]:
+                all_detections[ccy] = dt
+
+    current_ccys = set(account.get("currencies", ["GBP"]))
+    acct_start = date.fromisoformat(account.get("start_date", "2000-01-01"))
+    ccy_starts = dict(account.get("currency_start_dates", {}))
+    newly_added = []
+
+    for ccy in sorted(all_detections):
+        if ccy in current_ccys:
+            continue
+        first_conversion = all_detections[ccy]
+        start_dt = max(first_conversion - timedelta(days=7), acct_start)
+        current_ccys.add(ccy)
+        ccy_starts[ccy] = start_dt.isoformat()
+        newly_added.append(ccy)
+
+    if newly_added:
+        account["currencies"] = ["GBP"] + sorted(current_ccys - {"GBP"})
+        account["currency_start_dates"] = ccy_starts
+
+    return newly_added
+
+
+def _download_ccy_statements(
+    customer_id, account_id, account_name, ccy, ccy_start_date,
+    cutoff, out_dir, token, config,
+):
+    """Download transaction statement CSVs for one currency.
+
+    Handles skipping locked historic files, deleting and re-fetching the
+    current-year partial, and chunking by calendar year.
+
+    Returns 'downloaded', 'skipped', or 'error'.
+    """
+    existing = find_transaction_files(out_dir, ccy)
+
+    # Delete current-year partial (will be re-fetched up to cutoff)
+    for fpath, _s, end, is_full in existing:
+        if not is_full and (end.year == cutoff.year or end == date(cutoff.year - 1, 12, 31)):
+            print(
+                f"  Transactions {account_name}/{ccy}: replacing {fpath.name} "
+                f"(refreshing to {cutoff.isoformat()})"
+            )
+            fpath.unlink()
+
+    # Re-scan after cleanup to find the latest downloaded end date
+    existing = find_transaction_files(out_dir, ccy)
+    latest_end = None
+    for _, _, end, _ in existing:
+        if latest_end is None or end > latest_end:
+            latest_end = end
+
+    from_date = latest_end + timedelta(days=1) if latest_end else ccy_start_date
+
+    if from_date >= cutoff:
+        print(f"  Transactions {account_name}/{ccy}: " + colour("up to date", YELLOW))
+        return "skipped"
+
+    chunks = build_year_chunks(from_date, cutoff)
+    for chunk_from, chunk_to in chunks:
+        fname = transaction_filename(ccy, chunk_from, chunk_to)
+        out_file = out_dir / fname
+
+        if out_file.exists():
+            print(f"  Transactions {account_name}/{ccy} ({fname}): " + colour("exists", YELLOW))
+            continue
+
+        url = (
+            f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
+            f"/statements/{ccy}?fromDate={chunk_from.isoformat()}&toDate={chunk_to.isoformat()}"
+            f"&sortBy=TRANSACTION_DATE&sortOrder=DESCENDING"
+        )
+        print(f"  Transactions {account_name}/{ccy} ({fname})...", end=" ")
+
+        ii_throttle(config)
+        resp = requests.get(url, headers=make_headers(token))
+        if resp.status_code in (401, 403):
+            print(colour("AUTH FAILED", RED))
+            return "error"
+        if resp.status_code != 200:
+            print(colour(f"HTTP {resp.status_code}", RED))
+            print(colour(f"    Response: {resp.text[:500]}", RED))
+            return "error"
+
+        out_file.write_text(resp.content.decode("utf-8-sig").replace("﻿", ""), encoding="utf-8")
+        print(colour(f"saved → {out_file}", GREEN))
+
+    return "downloaded"
 
 
 def download_portfolio(customer_id, account, token, user_dir, config):
@@ -557,97 +738,58 @@ def find_transaction_files(account_dir, ccy):
 def download_transactions(customer_id, account, token, user_dir, config):
     """Download transaction statement CSVs for each currency.
 
-    Re-run logic:
-    - Full-year files (historic, complete) are never re-downloaded.
-    - Partial current-year files are deleted and re-fetched up to the cutoff date,
-      so transactions that posted after the last run are captured.
+    Processing order:
+    1. GBP is always downloaded first.
+    2. All on-disk GBP CSVs are scanned for FX conversion entries.  Any
+       non-GBP currency found in the descriptions that is not already in
+       account['currencies'] is added automatically, with a start date of
+       first_conversion_date - 7 days (safety buffer).
+    3. All remaining currencies (configured + auto-detected) are downloaded.
+
+    Re-run behaviour:
+    - Full-year historic files are never re-downloaded.
+    - The current-year partial is always deleted and refreshed up to cutoff.
+
+    Returns a dict {currency_code: status} where status is one of
+    'downloaded', 'skipped', or 'error'.
     """
     account_id = account["id"]
     account_name = account.get("name", account_id)
-    currencies = account.get("currencies", ["GBP"])
     start_date = account.get("start_date", "2024-01-01")
     today = date.today()
-    # Download up to today so today's transactions match today's portfolio snapshot.
-    # The current-year partial is always replaced on the next run, so there's no
-    # risk of a permanently-stale file (including across the Dec 31 → Jan 1 boundary).
     cutoff = config.get("_to_date", today)
-    results = []
+    results = {}
 
     out_dir = user_dir / account_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for ccy in currencies:
-        existing = find_transaction_files(out_dir, ccy)
+    def _effective_start(ccy):
+        return date.fromisoformat(
+            account.get("currency_start_dates", {}).get(ccy, start_date)
+        )
 
-        # Find the latest full-year end date (these are locked in)
-        latest_complete = None
-        for _, _, end, is_full in existing:
-            if is_full:
-                if latest_complete is None or end > latest_complete:
-                    latest_complete = end
+    # -- Phase 1: GBP ---------------------------------------------------------
+    results["GBP"] = _download_ccy_statements(
+        customer_id, account_id, account_name,
+        "GBP", _effective_start("GBP"), cutoff, out_dir, token, config,
+    )
 
-        # Delete any current-year partial so it gets re-fetched as a single unified
-        # file up to today.  Also catches the Dec 31 → Jan 1 boundary: on Jan 1
-        # the Dec 31 partial from last year is refreshed even though its year
-        # differs from today's.  Older historic partials (e.g. a mid-year start
-        # in 2022 ending 2022-12-31) are safely left alone.
-        for fpath, start, end, is_full in existing:
-            if not is_full and (end.year == cutoff.year or end == date(cutoff.year - 1, 12, 31)):
-                print(f"  Transactions {account_name}/{ccy}: replacing {fpath.name} (refreshing to {cutoff.isoformat()})")
-                fpath.unlink()
+    # -- Phase 2: Scan GBP files for newly-detected foreign currencies ---------
+    newly_added = scan_and_update_currencies(account, out_dir)
+    for ccy in newly_added:
+        start_str = account.get("currency_start_dates", {}).get(ccy, start_date)
+        print(colour(
+            f"  {account_name}: auto-detected {ccy} currency (start {start_str})", YELLOW,
+        ))
 
-        # Re-scan after cleanup to determine where to start from
-        existing = find_transaction_files(out_dir, ccy)
-        latest_end = None
-        for _, _, end, _ in existing:
-            if latest_end is None or end > latest_end:
-                latest_end = end
-
-        if latest_end:
-            from_date = latest_end + timedelta(days=1)
-        else:
-            from_date = date.fromisoformat(start_date)
-
-        if from_date >= cutoff:
-            print(f"  Transactions {account_name}/{ccy}: " + colour("up to date", YELLOW))
-            results.append("skipped")
+    # -- Phase 3: All non-GBP currencies (configured + newly detected) ---------
+    for ccy in account.get("currencies", ["GBP"]):
+        if ccy == "GBP":
             continue
-
-        chunks = build_year_chunks(from_date, cutoff)
-        ccy_ok = True
-
-        for chunk_from, chunk_to in chunks:
-            fname = transaction_filename(ccy, chunk_from, chunk_to)
-            out_file = out_dir / fname
-
-            # Skip if file already exists (e.g. full-year file from previous run)
-            if out_file.exists():
-                print(f"  Transactions {account_name}/{ccy} ({fname}): " + colour("exists", YELLOW))
-                continue
-
-            url = (
-                f"{BASE_URL}/1/customers/{customer_id}/accounts/{account_id}"
-                f"/statements/{ccy}?fromDate={chunk_from.isoformat()}&toDate={chunk_to.isoformat()}"
-                f"&sortBy=TRANSACTION_DATE&sortOrder=DESCENDING"
-            )
-            print(f"  Transactions {account_name}/{ccy} ({fname})...", end=" ")
-
-            ii_throttle(config)
-            resp = requests.get(url, headers=make_headers(token))
-            if resp.status_code in (401, 403):
-                print(colour("AUTH FAILED", RED))
-                ccy_ok = False
-                break
-            if resp.status_code != 200:
-                print(colour(f"HTTP {resp.status_code}", RED))
-                print(colour(f"    Response: {resp.text[:500]}", RED))
-                ccy_ok = False
-                break
-
-            out_file.write_text(resp.content.decode('utf-8-sig').replace('\ufeff', ''), encoding='utf-8')
-            print(colour(f"saved → {out_file}", GREEN))
-
-        results.append("downloaded" if ccy_ok else "error")
+        results[ccy] = _download_ccy_statements(
+            customer_id, account_id, account_name,
+            ccy, _effective_start(ccy), cutoff, out_dir, token, config,
+        )
 
     return results
 
@@ -1261,9 +1403,10 @@ def main():
         if do_transactions:
             print(colour("  Transaction statements", BOLD))
             for account in accounts:
+                # download_transactions returns {ccy: status}; account["currencies"]
+                # may be extended in-place if new currencies are auto-detected.
                 results = download_transactions(customer_id, account, token, user_dir, config)
-                for i, ccy in enumerate(account.get("currencies", ["GBP"])):
-                    status = results[i] if i < len(results) else "error"
+                for ccy, status in results.items():
                     summary.append((email, "Transactions", f"{account.get('name', account['id'])}/{ccy}", status))
             print()
 

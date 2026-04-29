@@ -21,8 +21,11 @@ from ii_download import (
     cgt_should_skip_valuation,
     decode_jwt_customer_id,
     decode_jwt_payload,
+    detect_currencies_from_gbp_csv,
+    detect_currencies_from_gbp_rows,
     find_transaction_files,
     is_current_year_partial,
+    scan_and_update_currencies,
     transaction_filename,
 )
 
@@ -396,3 +399,181 @@ class TestAccountFriendlyName:
     def test_single_word_holder_no_crash(self):
         # Holder name with only one word — should not crash, no disambiguation
         assert _account_friendly_name("JUNIOR_ISA", "BLUNDUN", True) == "Junior ISA"
+
+
+# ── GBP CSV / JSON currency detection ────────────────────────────────────────
+
+# Realistic GBP CSV header + FX conversion rows (from actual II downloads)
+_GBP_CSV_HEADER = "Date,Settlement Date,Symbol,Sedol,Quantity,Price,Description,Reference,Debit,Credit,Running Balance\n"
+_GBP_CSV_AUD_ROW = '10/08/2022,12/08/2022,n/a,n/a,9484.0,£0.5858,"9484 AUSTRALIAN DOLLAR          .58 S Date 12/08/22",REF1,"£5,555.87",n/a,"£55,540.83"\n'
+_GBP_CSV_USD_ROW = '10/08/2022,12/08/2022,n/a,n/a,7637.0,£0.83033,"7637 U.S. DOLLARS          .83 S Date 12/08/22",REF2,"£6,341.26",n/a,"£61,096.70"\n'
+_GBP_CSV_EUR_ROW = '02/12/2024,03/12/2024,n/a,n/a,44.69,£0.81629,"44.69 EURO NoTf     .81 S Date 03/12/24",REF3,n/a,£36.48,£3.89\n'
+_GBP_CSV_EUROPEAN_ROW = '15/01/2023,17/01/2023,EUFU,B456TR0,100,£12.50,"100 EUROPEAN EQUITY FUND Del  12.50 S Date 17/01/23",REF4,"£1,250.00",n/a,"£10,000.00"\n'
+_GBP_CSV_PLAIN_ROW = '30/12/2024,30/12/2024,ISF,0504245,n/a,n/a,"Div ISHARES FTSE100",REF5,n/a,£41.36,£44.72\n'
+
+
+class TestDetectCurrenciesFromGbpCsv:
+    def test_detects_aud(self):
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert "AUD" in result
+        assert result["AUD"] == date(2022, 8, 10)
+
+    def test_detects_usd(self):
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_USD_ROW
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert "USD" in result
+        assert result["USD"] == date(2022, 8, 10)
+
+    def test_detects_eur(self):
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_EUR_ROW
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert "EUR" in result
+        assert result["EUR"] == date(2024, 12, 2)
+
+    def test_european_does_not_match_eur(self):
+        # "EUROPEAN EQUITY FUND" must NOT be detected as EUR
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_EUROPEAN_ROW
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert "EUR" not in result
+
+    def test_plain_row_not_detected(self):
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_PLAIN_ROW
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert result == {}
+
+    def test_header_only_returns_empty(self):
+        result = detect_currencies_from_gbp_csv(_GBP_CSV_HEADER)
+        assert result == {}
+
+    def test_empty_string_returns_empty(self):
+        assert detect_currencies_from_gbp_csv("") == {}
+
+    def test_multiple_currencies_detected(self):
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW + _GBP_CSV_USD_ROW + _GBP_CSV_EUR_ROW
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert set(result.keys()) == {"AUD", "USD", "EUR"}
+
+    def test_earliest_date_returned_for_repeated_currency(self):
+        # Two USD rows — earliest date wins
+        early_usd = '05/03/2021,07/03/2021,n/a,n/a,5000.0,£0.72,"5000 U.S. DOLLARS .72 S Date 07/03/21",REF6,"£3,600.00",n/a,"£50,000.00"\n'
+        csv_text = _GBP_CSV_HEADER + _GBP_CSV_USD_ROW + early_usd
+        result = detect_currencies_from_gbp_csv(csv_text)
+        assert result["USD"] == date(2021, 3, 5)
+
+
+class TestDetectCurrenciesFromGbpRows:
+    def test_detects_aud(self):
+        rows = [{"transactionDate": "2022-08-10",
+                 "description": "9484 AUSTRALIAN DOLLAR .58 S Date 12/08/22"}]
+        result = detect_currencies_from_gbp_rows(rows)
+        assert result == {"AUD": date(2022, 8, 10)}
+
+    def test_detects_usd_dollars_plural(self):
+        rows = [{"transactionDate": "2022-08-10",
+                 "description": "7637 U.S. DOLLARS .83 S Date 12/08/22"}]
+        result = detect_currencies_from_gbp_rows(rows)
+        assert "USD" in result
+
+    def test_detects_eur(self):
+        rows = [{"transactionDate": "2024-12-02",
+                 "description": "44.69 EURO NoTf .81 S Date 03/12/24"}]
+        result = detect_currencies_from_gbp_rows(rows)
+        assert "EUR" in result
+
+    def test_european_does_not_match_eur(self):
+        rows = [{"transactionDate": "2023-01-15",
+                 "description": "100 EUROPEAN EQUITY FUND Del 12.50 S Date 17/01/23"}]
+        result = detect_currencies_from_gbp_rows(rows)
+        assert "EUR" not in result
+
+    def test_empty_rows_returns_empty(self):
+        assert detect_currencies_from_gbp_rows([]) == {}
+
+    def test_missing_transaction_date_skipped(self):
+        rows = [{"description": "9484 AUSTRALIAN DOLLAR .58 S Date 12/08/22"}]
+        result = detect_currencies_from_gbp_rows(rows)
+        assert result == {}
+
+    def test_earliest_date_wins_across_multiple_rows(self):
+        rows = [
+            {"transactionDate": "2022-08-10", "description": "7637 U.S. DOLLARS .83 S"},
+            {"transactionDate": "2021-03-05", "description": "5000 U.S. DOLLARS .72 S"},
+        ]
+        result = detect_currencies_from_gbp_rows(rows)
+        assert result["USD"] == date(2021, 3, 5)
+
+
+class TestScanAndUpdateCurrencies:
+    def _make_account(self, currencies=None, start_date="2022-01-01"):
+        return {
+            "id": "1234567",
+            "name": "ISA",
+            "start_date": start_date,
+            "currencies": currencies or ["GBP"],
+        }
+
+    def test_adds_aud_from_gbp_file(self, tmp_path):
+        csv = _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW
+        (tmp_path / "transactions_GBP_2022.csv").write_text(csv, encoding="utf-8")
+        account = self._make_account()
+        newly = scan_and_update_currencies(account, tmp_path)
+        assert newly == ["AUD"]
+        assert "AUD" in account["currencies"]
+
+    def test_start_date_is_conversion_minus_7_days(self, tmp_path):
+        csv = _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW  # first conversion 2022-08-10
+        (tmp_path / "transactions_GBP_2022.csv").write_text(csv, encoding="utf-8")
+        account = self._make_account(start_date="2022-01-01")
+        scan_and_update_currencies(account, tmp_path)
+        aud_start = date.fromisoformat(account["currency_start_dates"]["AUD"])
+        assert aud_start == date(2022, 8, 3)  # 2022-08-10 - 7 days
+
+    def test_start_date_clamped_to_account_start(self, tmp_path):
+        # If conversion - 7 days < account start, clamp to account start
+        csv = _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW  # conversion on 2022-08-10
+        (tmp_path / "transactions_GBP_2022.csv").write_text(csv, encoding="utf-8")
+        account = self._make_account(start_date="2022-08-08")  # start after (conv - 7)
+        scan_and_update_currencies(account, tmp_path)
+        aud_start = date.fromisoformat(account["currency_start_dates"]["AUD"])
+        assert aud_start == date(2022, 8, 8)
+
+    def test_does_not_add_existing_currency(self, tmp_path):
+        csv = _GBP_CSV_HEADER + _GBP_CSV_USD_ROW
+        (tmp_path / "transactions_GBP_2022.csv").write_text(csv, encoding="utf-8")
+        account = self._make_account(currencies=["GBP", "USD"])
+        newly = scan_and_update_currencies(account, tmp_path)
+        assert newly == []
+
+    def test_empty_dir_returns_empty(self, tmp_path):
+        account = self._make_account()
+        newly = scan_and_update_currencies(account, tmp_path)
+        assert newly == []
+        assert account["currencies"] == ["GBP"]
+
+    def test_no_fx_entries_returns_empty(self, tmp_path):
+        csv = _GBP_CSV_HEADER + _GBP_CSV_PLAIN_ROW
+        (tmp_path / "transactions_GBP_2024.csv").write_text(csv, encoding="utf-8")
+        account = self._make_account()
+        newly = scan_and_update_currencies(account, tmp_path)
+        assert newly == []
+
+    def test_multiple_files_merged(self, tmp_path):
+        # AUD in 2022 file, USD in 2024 file
+        (tmp_path / "transactions_GBP_2022.csv").write_text(
+            _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW, encoding="utf-8"
+        )
+        (tmp_path / "transactions_GBP_2024.csv").write_text(
+            _GBP_CSV_HEADER + _GBP_CSV_USD_ROW, encoding="utf-8"
+        )
+        account = self._make_account()
+        newly = scan_and_update_currencies(account, tmp_path)
+        assert set(newly) == {"AUD", "USD"}
+        assert set(account["currencies"]) == {"GBP", "AUD", "USD"}
+
+    def test_gbp_always_first_in_currencies(self, tmp_path):
+        csv = _GBP_CSV_HEADER + _GBP_CSV_AUD_ROW
+        (tmp_path / "transactions_GBP_2022.csv").write_text(csv, encoding="utf-8")
+        account = self._make_account()
+        scan_and_update_currencies(account, tmp_path)
+        assert account["currencies"][0] == "GBP"

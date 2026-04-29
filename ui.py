@@ -270,15 +270,18 @@ def show_onboarding():
                 for _j in range(20):
                     for _sfx in ["name", "id", "start", "cur"]:
                         st.session_state.pop(f"wu0_a{_j}_{_sfx}", None)
-                cfg["users"][0]["accounts"] = [
-                    {
+                new_accounts = []
+                for a in _discovered:
+                    acct = {
                         "id": a["id"],
                         "name": a["name"],
                         "start_date": a["start_date"],
                         "currencies": a["currencies"],
                     }
-                    for a in _discovered
-                ]
+                    if a.get("currency_start_dates"):
+                        acct["currency_start_dates"] = a["currency_start_dates"]
+                    new_accounts.append(acct)
+                cfg["users"][0]["accounts"] = new_accounts
                 st.session_state["wiz_disc_done"] = True
             st.rerun()
 
