@@ -1,6 +1,6 @@
 # ii-to-soren
 
-A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) and push it to a [Soren](https://www.getsoren.app) instance for CGT calculations.
+A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) and push it to [Soren](https://www.getsoren.app) for CGT calculations.
 
 It comes with both a **Streamlit web UI** (recommended) and a **CLI** for scripting / automation.
 

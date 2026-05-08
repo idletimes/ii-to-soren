@@ -884,6 +884,26 @@ def cgt_fetch_account_map(api_url, cgt_token):
     return {a["accountNumber"]: a["id"] for a in accounts}
 
 
+def _unique_email_prefixes(emails):
+    """Return {email: prefix} using the shortest prefix of each email's local part
+    that uniquely identifies it among the set. Returns empty strings for single-user sets."""
+    if len(emails) <= 1:
+        return {e: "" for e in emails}
+    locals_ = {e: e.split("@")[0].upper() for e in emails}
+    needed = {e: 1 for e in emails}
+    while True:
+        prefixes = {e: locals_[e][:needed[e]] for e in emails}
+        from collections import Counter
+        counts = Counter(prefixes.values())
+        collisions = {e for e in emails if counts[prefixes[e]] > 1}
+        if not collisions:
+            break
+        for e in collisions:
+            if needed[e] < len(locals_[e]):
+                needed[e] += 1
+    return {e: locals_[e][:needed[e]] for e in emails}
+
+
 def _infer_account_type(name):
     """Infer Soren account_type from a friendly name string.
 
@@ -1035,6 +1055,8 @@ def push_to_cgt(config, account_filter=None, user_emails=None, create_accounts=F
     if not api_url:
         print(colour("No cgt.api_url in config — cannot push.", RED))
         return
+    if not api_url.startswith(("http://", "https://")):
+        api_url = "https://" + api_url
 
     cgt_token = (
         os.environ.get("CGT_TOKEN")
@@ -1048,14 +1070,20 @@ def push_to_cgt(config, account_filter=None, user_emails=None, create_accounts=F
     print(colour(BOLD + "Fetching Soren account mapping..." + RESET, BOLD))
     account_map = cgt_fetch_account_map(api_url, cgt_token)
     if account_map is None:
-        return
+        sys.exit(1)
 
     summary = []
 
     # Walk all user download directories
     if not DOWNLOADS_DIR.exists():
         print(colour("No downloads directory found — download first.", RED))
-        return
+        sys.exit(1)
+
+    active_emails = [
+        d.name for d in sorted(DOWNLOADS_DIR.iterdir())
+        if d.is_dir() and (user_emails is None or d.name in user_emails)
+    ]
+    email_prefixes = _unique_email_prefixes(active_emails)
 
     for user_dir in sorted(DOWNLOADS_DIR.iterdir()):
         if not user_dir.is_dir():
@@ -1091,10 +1119,12 @@ def push_to_cgt(config, account_filter=None, user_emails=None, create_accounts=F
                         for a in u.get("accounts", []):
                             if a["id"] == ii_account_id:
                                 acct_name = a.get("name", ii_account_id)
+                    prefix = email_prefixes.get(user_dir.name, "")
+                    display_name = f"{prefix}-{acct_name}" if prefix else acct_name
                     acct_type = _infer_account_type(acct_name)
-                    print(f"  Account {ii_account_id} ({acct_name}): " +
+                    print(f"  Account {ii_account_id} ({display_name}): " +
                           colour(f"not found in Soren — creating as {acct_type}...", YELLOW), end=" ")
-                    cgt_id = cgt_create_account(api_url, cgt_token, ii_account_id, acct_name)
+                    cgt_id = cgt_create_account(api_url, cgt_token, ii_account_id, display_name)
                     if cgt_id:
                         account_map[ii_account_id] = cgt_id
                         print(colour(f"created (id={cgt_id})", GREEN))

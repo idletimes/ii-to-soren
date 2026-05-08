@@ -34,7 +34,7 @@ def strip_ansi(text):
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
-def run_and_stream(args, env_extra=None):
+def run_and_stream(args, env_extra=None, show_push_counter=False):
     """Run ii_download.py, streaming output into a st.code block.
     Returns (success: bool, log: str)."""
     env = os.environ.copy()
@@ -50,10 +50,25 @@ def run_and_stream(args, env_extra=None):
         cwd=Path(__file__).parent,
     )
 
+    counter_box = st.empty() if show_push_counter else None
     output_box = st.empty()
     lines = []
+    files_pushed = 0
+    current_user = ""
+
     for line in proc.stdout:
-        lines.append(strip_ansi(line))
+        clean = strip_ansi(line)
+        lines.append(clean)
+        if show_push_counter:
+            stripped = clean.strip()
+            if "pushed" in stripped:
+                files_pushed += 1
+            if stripped.startswith("Pushing:"):
+                current_user = stripped.removeprefix("Pushing:").strip()
+            counter_box.caption(
+                f"📤 **{files_pushed} file{'s' if files_pushed != 1 else ''} pushed**" +
+                (f" — {current_user}" if current_user else "")
+            )
         output_box.code("".join(lines), language=None)
     proc.wait()
     return proc.returncode == 0, "".join(lines)
@@ -63,9 +78,16 @@ def run_all_users(user_tokens, common_args):
     """Run ii_download.py once per user (sequentially), streaming combined output.
     user_tokens: {email: token}. Returns (all_ok: bool, combined_log: str)."""
     env = os.environ.copy()
+    counter_box = st.empty()
     output_box = st.empty()
     all_lines = []
     all_ok = True
+    files_saved = 0
+    current_op = ""
+
+    def update_counter():
+        counter_box.caption(f"📥 **{files_saved} file{'s' if files_saved != 1 else ''} processed**" +
+                            (f" — {current_op}" if current_op else ""))
 
     for email, token in user_tokens.items():
         args = ["--user", email, "--token", token] + common_args
@@ -78,12 +100,24 @@ def run_all_users(user_tokens, common_args):
             cwd=Path(__file__).parent,
         )
         for line in proc.stdout:
-            all_lines.append(strip_ansi(line))
+            clean = strip_ansi(line)
+            all_lines.append(clean)
+            stripped = clean.strip()
+            if "saved →" in clean:
+                files_saved += 1
+            elif "pushed" in stripped:
+                files_saved += 1
+            if stripped.startswith("Downloading ") or stripped.startswith("Transactions "):
+                current_op = stripped.split("...")[0].strip()
+            elif stripped.startswith("Pushing:"):
+                current_op = "pushing to Soren — " + stripped.removeprefix("Pushing:").strip()
+            update_counter()
             output_box.code("".join(all_lines), language=None)
         proc.wait()
         if proc.returncode != 0:
             all_ok = False
 
+    update_counter()
     return all_ok, "".join(all_lines)
 
 
@@ -179,274 +213,374 @@ st.components.v1.html("""
 
 
 def show_onboarding():
-    """Full-page first-time setup wizard shown when config.yaml doesn't exist."""
+    """Multi-step first-time setup wizard shown when config.yaml doesn't exist."""
 
     CURRENCIES = ["AUD", "CAD", "CHF", "DKK", "EUR", "GBP", "HKD", "JPY", "NOK", "SEK", "SGD", "USD"]
+    STEPS = ["Accounts", "Your logins", "Bookmarklet", "Get token", "Soren API key"]
 
     st.title("📊 Welcome to II → Soren")
-    st.info(
-        "👋 No config file found yet — let's create one. "
-        "Fill in your details below and click **Create Config** to get started."
-    )
 
+    if "onb_step" not in st.session_state:
+        st.session_state.onb_step = 0
     if "wiz_cfg" not in st.session_state:
         st.session_state.wiz_cfg = {
             "ii_request_delay": {"min": 1, "max": 3},
             "cgt": {"api_url": "https://app.getsoren.app"},
-            "users": [{"email": "", "accounts": [
-                {"id": "", "name": "", "start_date": "2024-01-01", "currencies": ["GBP"]}
-            ]}],
+            "users": [{"email": "", "accounts": []}],
         }
+    if "onb_auto_discover" not in st.session_state:
+        st.session_state.onb_auto_discover = True
 
     cfg = st.session_state.wiz_cfg
+    step = st.session_state.onb_step
+    auto_discover = st.session_state.onb_auto_discover
+
+    def sync_emails():
+        for i, user in enumerate(cfg["users"]):
+            val = st.session_state.get(f"onb_email_{i}", "")
+            if val:
+                user["email"] = val.strip()
 
     def wiz_sync():
-        """Flush current widget values back into wiz_cfg before structural changes."""
+        sync_emails()
         for i, user in enumerate(cfg["users"]):
-            user["email"] = st.session_state.get(f"wu{i}_email", user["email"])
-            for j, acct in enumerate(user["accounts"]):
-                acct["name"] = st.session_state.get(f"wu{i}_a{j}_name", acct["name"])
-                acct["id"] = st.session_state.get(f"wu{i}_a{j}_id", acct["id"])
-                acct["start_date"] = st.session_state.get(f"wu{i}_a{j}_start", acct["start_date"])
-                acct["currencies"] = st.session_state.get(f"wu{i}_a{j}_cur", acct["currencies"])
+            for j, acct in enumerate(user.get("accounts", [])):
+                acct["name"] = st.session_state.get(f"wu{i}_a{j}_name", acct.get("name", ""))
+                acct["id"] = st.session_state.get(f"wu{i}_a{j}_id", acct.get("id", ""))
+                acct["start_date"] = st.session_state.get(f"wu{i}_a{j}_start", acct.get("start_date", ""))
+                acct["currencies"] = st.session_state.get(f"wu{i}_a{j}_cur", acct.get("currencies", ["GBP"]))
 
-    # ── Auto-discovery ────────────────────────────────────────────────────────
-    st.subheader("Your Interactive Investor Accounts")
-
-    with st.expander("✨ Auto-discover accounts (recommended)", expanded=not st.session_state.get("wiz_disc_done")):
-        st.markdown(
-            "Paste your II bearer token to automatically discover your accounts, "
-            "start dates, and currencies — no manual config needed. "
-            "Takes about 1–2 minutes."
-        )
-        st.caption(
-            "Don't have a token yet? Use the **🔖 Bookmarklet** tab after setup, "
-            "or grab one manually: log into ii.co.uk → DevTools → Network → any "
-            "request to api-prod.ii.co.uk → copy the Authorization header."
-        )
-
-        col_tok, col_btn = st.columns([5, 1])
-        col_tok.text_input(
-            "II Bearer Token",
-            key="wiz_discover_token",
-            placeholder="eyJhbGci...",
-            label_visibility="collapsed",
-        )
-        disc_clicked = col_btn.button("🔍 Discover", type="primary", key="wiz_disc_btn")
-
-        if disc_clicked:
-            if not st.session_state.get("wiz_discover_token", "").strip():
-                st.error("Paste your II bearer token above first.")
-            else:
-                st.session_state["wiz_disc_running"] = True
-                st.rerun()
-
-        # ── Run discovery subprocess ──────────────────────────────────────────
-        if st.session_state.get("wiz_disc_running"):
-            _disc_token = st.session_state.get("wiz_discover_token", "").strip()
-            with st.status("Discovering accounts from Interactive Investor…", expanded=True) as _disc_status:
-                _ok, _log = run_and_stream(["--discover", "--token", _disc_token])
-                _discovered = None
-                for _line in _log.splitlines():
-                    _clean = strip_ansi(_line).strip()
-                    if _clean.startswith("DISCOVERED:"):
-                        try:
-                            _discovered = json.loads(_clean[len("DISCOVERED:"):])
-                        except Exception:
-                            pass
-                        break
-                if _discovered and _ok:
-                    _disc_status.update(
-                        label=f"✓ Found {len(_discovered)} account(s)", state="complete"
-                    )
-                else:
-                    _disc_status.update(label="✗ Discovery failed — check token", state="error")
-
-            # Outside the status block — update state and repopulate form
-            st.session_state["wiz_disc_running"] = False
-            if _discovered and _ok:
-                # Clear any previously-rendered account widget values so the
-                # form re-renders with the discovered data on the next run
-                for _j in range(20):
-                    for _sfx in ["name", "id", "start", "cur"]:
-                        st.session_state.pop(f"wu0_a{_j}_{_sfx}", None)
-                new_accounts = []
-                for a in _discovered:
-                    acct = {
-                        "id": a["id"],
-                        "name": a["name"],
-                        "start_date": a["start_date"],
-                        "currencies": a["currencies"],
-                    }
-                    if a.get("currency_start_dates"):
-                        acct["currency_start_dates"] = a["currency_start_dates"]
-                    new_accounts.append(acct)
-                cfg["users"][0]["accounts"] = new_accounts
-                st.session_state["wiz_disc_done"] = True
+    def nav_buttons(back_step, next_label, next_step=None, next_action=None):
+        st.divider()
+        col_back, _, col_next = st.columns([1, 3, 2])
+        if col_back.button("← Back"):
+            st.session_state.onb_step = back_step
             st.rerun()
-
-        # ── Post-discovery status message ─────────────────────────────────────
-        if st.session_state.get("wiz_disc_done"):
-            n = len(cfg["users"][0].get("accounts", []))
-            st.success(
-                f"✓ {n} account(s) discovered and pre-filled below. "
-                "Review them, enter your email, then click **Create Config**."
-            )
-            if st.button("🔄 Re-discover", key="wiz_redisc"):
-                st.session_state["wiz_disc_done"] = False
-                st.session_state["wiz_disc_running"] = True
+        if col_next.button(next_label, type="primary"):
+            if next_action:
+                next_action()
+            elif next_step is not None:
+                st.session_state.onb_step = next_step
                 st.rerun()
 
-    st.caption("Add each II login you want to include.")
-
-    for i, user in enumerate(cfg["users"]):
-        with st.container(border=True):
-            col_e, col_del = st.columns([4, 1])
-            col_e.text_input("II Login Email", value=user["email"],
-                             placeholder="you@example.com", key=f"wu{i}_email")
-            if len(cfg["users"]) > 1 and col_del.button("Remove", key=f"wiz_del_user_{i}"):
-                wiz_sync()
-                cfg["users"].pop(i)
-                st.rerun()
-
-            st.caption("**Accounts**")
-            for j, acct in enumerate(user["accounts"]):
-                col_n, col_id, col_d, col_cur, col_a = st.columns([2, 2, 2, 4, 1])
-                col_n.text_input("Name", value=acct["name"],
-                                 placeholder="ISA", key=f"wu{i}_a{j}_name")
-                col_id.text_input("Account ID", value=acct["id"],
-                                  placeholder="1234567",
-                                  help="7-digit account number from ii.co.uk",
-                                  key=f"wu{i}_a{j}_id")
-                col_d.text_input("Start Date", value=acct["start_date"],
-                                 placeholder="YYYY-MM-DD",
-                                 help="Earliest date to pull transactions from. It doesn't matter if you set this too early, but try not to set it too late.",
-                                 key=f"wu{i}_a{j}_start")
-                col_cur.multiselect("Currencies", CURRENCIES,
-                                    default=acct["currencies"], key=f"wu{i}_a{j}_cur")
-                col_a.markdown("<br>", unsafe_allow_html=True)
-                if len(user["accounts"]) > 1 and col_a.button("🗑", key=f"wiz_del_acct_{i}_{j}",
-                                                               help="Remove account"):
-                    wiz_sync()
-                    user["accounts"].pop(j)
-                    st.rerun()
-
-            if st.button("＋ Add Account", key=f"wiz_add_acct_{i}"):
-                wiz_sync()
-                user["accounts"].append({"id": "", "name": "",
-                                         "start_date": str(date.today()),
-                                         "currencies": ["GBP"]})
-                st.rerun()
-
-    if st.button("＋ Add another II login"):
-        wiz_sync()
-        cfg["users"].append({"email": "", "accounts": [
-            {"id": "", "name": "", "start_date": str(date.today()), "currencies": ["GBP"]}
-        ]})
-        st.rerun()
-
-    # ── Global settings (collapsed by default — defaults are fine for most) ───
-    with st.expander("⚙️ Advanced Settings"):
-        st.caption("The defaults work for most setups — only change these if needed.")
-        col1, col2, col3 = st.columns([1, 1, 3])
-        col1.number_input("Request delay min (s)", min_value=0, max_value=60,
-                          value=int(cfg["ii_request_delay"]["min"]), key="wiz_dmin")
-        col2.number_input("Request delay max (s)", min_value=0, max_value=60,
-                          value=int(cfg["ii_request_delay"]["max"]), key="wiz_dmax")
-        col3.text_input("Soren API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
-        st.text_input("Soren API Key (optional — saves re-pasting each time)",
-                      value=cfg["cgt"].get("api_key", ""), key="wiz_cgt_key")
-
-    # Render validation errors from previous submit attempt (above the button)
-    for err in st.session_state.get("wiz_errors", []):
-        st.error(err)
+    # Step indicator
+    cols = st.columns(len(STEPS))
+    for idx, label in enumerate(STEPS):
+        with cols[idx]:
+            if idx < step:
+                st.markdown(f"✓ {label}")
+            elif idx == step:
+                st.markdown(f"**→ {label}**")
+            else:
+                st.markdown(f"<span style='color:#6b7280'>{label}</span>", unsafe_allow_html=True)
 
     st.divider()
 
-    if st.button("✓ Create Config", type="primary"):
-        wiz_sync()
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 0 — Auto-discover preference
+    # ══════════════════════════════════════════════════════════════════════════
+    if step == 0:
+        st.subheader("Setting up your accounts")
+        st.markdown(
+            "II → Soren downloads your transaction history and portfolio from "
+            "Interactive Investor and syncs it to [Soren](https://app.getsoren.app).\n\n"
+            "The easiest way to set up your accounts is **auto-discover**: "
+            "once you're logged into ii.co.uk, it finds your accounts, start dates, "
+            "and currencies automatically — no manual entry needed."
+        )
 
-        # Pull advanced settings
-        cfg["ii_request_delay"]["min"] = st.session_state.get("wiz_dmin", 1)
-        cfg["ii_request_delay"]["max"] = st.session_state.get("wiz_dmax", 3)
-        cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "https://app.getsoren.app")
-        key = st.session_state.get("wiz_cgt_key", "").strip()
-        if key:
-            cfg["cgt"]["api_key"] = key
-        else:
-            cfg["cgt"].pop("api_key", None)
+        choice = st.radio(
+            "How would you like to set up your accounts?",
+            options=["Auto-discover (recommended)", "Enter account details manually"],
+            index=0 if auto_discover else 1,
+            key="onb_disc_choice",
+        )
+        st.session_state.onb_auto_discover = (choice == "Auto-discover (recommended)")
 
-        # Validate
-        errors = []
+        st.divider()
+        if st.button("Next →", type="primary"):
+            st.session_state.onb_step = 1
+            st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 1 — II login emails
+    # ══════════════════════════════════════════════════════════════════════════
+    elif step == 1:
+        st.subheader("Your Interactive Investor logins")
+        st.markdown(
+            "Enter the email address you use to log into **ii.co.uk**. "
+            "If you have more than one II account (e.g. a joint account under a different login), "
+            "add each one separately."
+        )
+
         for i, user in enumerate(cfg["users"]):
-            label = user["email"] or f"User {i + 1}"
-            if not user["email"]:
-                errors.append(f"**{label}**: email is required")
-            for j, acct in enumerate(user["accounts"]):
-                alabel = acct["name"] or f"Account {j + 1}"
-                if not acct["id"]:
-                    errors.append(f"**{label} / {alabel}**: account ID is required")
-                if not acct["start_date"]:
-                    errors.append(f"**{label} / {alabel}**: start date is required")
-                if not acct["currencies"]:
-                    errors.append(f"**{label} / {alabel}**: select at least one currency")
+            col_e, col_del = st.columns([5, 1])
+            col_e.text_input(
+                "II Login Email" if i == 0 else f"II Login Email #{i + 1}",
+                value=user["email"],
+                placeholder="you@example.com",
+                key=f"onb_email_{i}",
+            )
+            if len(cfg["users"]) > 1:
+                col_del.markdown("<br>", unsafe_allow_html=True)
+                if col_del.button("Remove", key=f"onb_del_{i}"):
+                    sync_emails()
+                    cfg["users"].pop(i)
+                    for k in range(20):
+                        st.session_state.pop(f"onb_email_{k}", None)
+                    st.rerun()
 
-        st.session_state["wiz_errors"] = errors
-        if errors:
+        if st.button("＋ Add another II login"):
+            sync_emails()
+            cfg["users"].append({"email": "", "accounts": []})
             st.rerun()
-        else:
-            with open(CONFIG_FILE, "w") as f:
-                yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-            del st.session_state.wiz_cfg
-            st.session_state["wiz_step"] = 2
-            st.rerun()
 
+        def _next_emails():
+            sync_emails()
+            if all(u["email"] for u in cfg["users"]):
+                st.session_state.onb_step = 2
+                st.rerun()
+            else:
+                st.error("Please enter an email address for each login.")
 
-def show_bookmarklet_step():
-    """Step 2 of onboarding: explain and set up the bookmarklet."""
-    st.title("📊 One last thing — getting your token")
-    st.success("✓ Config saved! You're nearly ready.")
+        nav_buttons(back_step=0, next_label="Next →", next_action=_next_emails)
 
-    st.markdown("""
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 2 — Install the bookmarklet
+    # ══════════════════════════════════════════════════════════════════════════
+    elif step == 2:
+        st.subheader("Install the Get II Token bookmarklet")
+        st.markdown("""
 When you download from Interactive Investor, the app needs to prove it's really you.
-II does this with a short-lived access code — called a **bearer token** — that it issues
-when you log in. It's a bit like a temporary visitor pass: valid for about 30 minutes,
-then it expires and you need a fresh one.
+II uses a short-lived access code called a **bearer token** — like a temporary visitor
+pass, valid for about 30 minutes before you need a fresh one.
 
-Getting this code manually means digging through browser developer tools, which isn't fun.
-The **Get II Token** bookmarklet is a one-click shortcut that handles it for you:
+The **Get II Token** bookmarklet captures it automatically:
 
-- **Save it once** — drag the button below to your browser's bookmarks bar
-- **Use it each time** — click it while you're on ii.co.uk, navigate anywhere on the site,
-  and it quietly copies your token to the clipboard the moment it spots it
-- **Paste and go** — come back here and paste it into the token field in the Download tab
+1. **Save it once** — drag the button below to your browser's bookmarks bar
+2. **Use it each time** — go to ii.co.uk, click **Get II Token**, navigate anywhere,
+   and it copies your token to the clipboard the moment it spots it
+3. **Paste and go** — come back here and paste it in the next step
 
 Nothing is sent anywhere. The token never leaves your browser.
 """)
 
-    st.info(
-        "**To show your bookmarks bar:** "
-        "**Mac** — ⌘ Cmd + Shift + B  ·  "
-        "**Windows/Linux** — Ctrl + Shift + B"
-    )
+        st.info(
+            "**To show your bookmarks bar:** "
+            "**Mac** — ⌘ Cmd + Shift + B  ·  "
+            "**Windows/Linux** — Ctrl + Shift + B"
+        )
 
-    render_bookmarklet_button()
+        render_bookmarklet_button()
 
-    st.divider()
+        nav_buttons(back_step=1, next_label="Next — I've saved it →", next_step=3)
 
-    if st.button("✓ Done — take me to the app", type="primary"):
-        st.session_state.pop("wiz_step", None)
-        st.rerun()
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 3 — Get bearer token(s) + manual account entry if not auto-discover
+    # ══════════════════════════════════════════════════════════════════════════
+    elif step == 3:
+        if auto_discover:
+            st.subheader("Get your II token")
+            st.markdown(
+                "Go to **[ii.co.uk](https://www.ii.co.uk/)**, click **Get II Token** "
+                "in your bookmarks bar, navigate anywhere on the site (e.g. your portfolio), "
+                "and the token will be copied to your clipboard. Paste it below."
+            )
+            st.caption("Accounts will be discovered automatically when you finish setup.")
+            if len(cfg["users"]) > 1:
+                st.warning(
+                    "**Multiple logins:** use a separate browser profile for each II account. "
+                    "Logging into a second account in the same profile will log out the first, "
+                    "making its token unusable before discovery has run. "
+                    "In Chrome: click your profile picture → **Add profile**. "
+                    "In Firefox: open the **Profile Manager** (`about:profiles`)."
+                )
+        else:
+            st.subheader("Your account details")
+            st.markdown(
+                "Enter the details for each II account you want to sync. "
+                "You can find your 7-digit account number on the ii.co.uk website."
+            )
 
-    st.caption("You can always find this button again in the 🔖 Bookmarklet tab.")
+        for i, user in enumerate(cfg["users"]):
+            with st.container(border=True):
+                st.markdown(f"**{user['email']}**")
+
+                st.text_input(
+                    "II Bearer Token",
+                    key=f"wiz_token_{i}",
+                    placeholder="eyJhbGci...",
+                    label_visibility="collapsed",
+                )
+
+                if not auto_discover:
+                    # Manual account entry
+                    if user.get("accounts"):
+                        st.caption("**Accounts**")
+                        for j, acct in enumerate(user["accounts"]):
+                            col_n, col_id, col_d, col_cur, col_a = st.columns([2, 2, 2, 4, 1])
+                            col_n.text_input("Name", value=acct["name"], placeholder="ISA",
+                                             key=f"wu{i}_a{j}_name")
+                            col_id.text_input("Account ID", value=acct["id"], placeholder="1234567",
+                                              help="7-digit account number from ii.co.uk",
+                                              key=f"wu{i}_a{j}_id")
+                            col_d.text_input("Start Date", value=acct["start_date"],
+                                             placeholder="YYYY-MM-DD",
+                                             help="Earliest date to pull transactions from. Too early is fine.",
+                                             key=f"wu{i}_a{j}_start")
+                            col_cur.multiselect("Currencies", CURRENCIES,
+                                                default=acct["currencies"], key=f"wu{i}_a{j}_cur")
+                            col_a.markdown("<br>", unsafe_allow_html=True)
+                            if len(user["accounts"]) > 1 and col_a.button("🗑", key=f"wiz_del_{i}_{j}",
+                                                                            help="Remove account"):
+                                wiz_sync()
+                                user["accounts"].pop(j)
+                                st.rerun()
+
+                    if st.button("＋ Add Account", key=f"wiz_add_acct_{i}"):
+                        wiz_sync()
+                        user["accounts"].append({"id": "", "name": "",
+                                                 "start_date": str(date.today()),
+                                                 "currencies": ["GBP"]})
+                        st.rerun()
+
+        def _next_tokens():
+            # Store tokens; validate manual accounts if not auto-discover
+            st.session_state["wiz_tokens"] = {
+                i: st.session_state.get(f"wiz_token_{i}", "").strip()
+                for i in range(len(cfg["users"]))
+            }
+            if not auto_discover:
+                wiz_sync()
+                errors = []
+                for i, user in enumerate(cfg["users"]):
+                    if not user.get("accounts"):
+                        errors.append(f"**{user['email']}**: add at least one account")
+                    for j, acct in enumerate(user.get("accounts", [])):
+                        alabel = acct["name"] or f"Account {j + 1}"
+                        if not acct["id"]:
+                            errors.append(f"**{user['email']} / {alabel}**: account ID is required")
+                        if not acct["start_date"]:
+                            errors.append(f"**{user['email']} / {alabel}**: start date is required")
+                        if not acct["currencies"]:
+                            errors.append(f"**{user['email']} / {alabel}**: select at least one currency")
+                st.session_state["wiz_errors"] = errors
+                if errors:
+                    st.rerun()
+                    return
+            st.session_state["wiz_errors"] = []
+            st.session_state.onb_step = 4
+            st.rerun()
+
+        for err in st.session_state.get("wiz_errors", []):
+            st.error(err)
+
+        nav_buttons(back_step=2, next_label="Next →", next_action=_next_tokens)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 4 — Soren API key + Finish (runs discovery if auto-discover)
+    # ══════════════════════════════════════════════════════════════════════════
+    elif step == 4:
+        st.subheader("Connect to Soren")
+        st.markdown("""
+To push your data to Soren, you need an API key. Here's how to get one:
+
+1. Log into **[app.getsoren.app](https://app.getsoren.app)**
+2. Go to **Settings → API**
+3. Click **Create new API key**
+4. Copy the key and paste it below
+""")
+
+        st.text_input(
+            "Soren API Key",
+            value=cfg["cgt"].get("api_key", ""),
+            placeholder="sk-...",
+            key="wiz_cgt_key",
+            help="Stored in config.yaml — keep this file private.",
+        )
+
+        st.caption("You can skip this for now and add the key later in the ⚙️ Config tab.")
+
+        with st.expander("⚙️ Advanced Settings"):
+            st.caption("The defaults work for most setups — only change these if needed.")
+            col1, col2, col3 = st.columns([1, 1, 3])
+            col1.number_input("Request delay min (s)", min_value=0, max_value=60,
+                              value=int(cfg["ii_request_delay"]["min"]), key="wiz_dmin")
+            col2.number_input("Request delay max (s)", min_value=0, max_value=60,
+                              value=int(cfg["ii_request_delay"]["max"]), key="wiz_dmax")
+            col3.text_input("Soren API URL", value=cfg["cgt"]["api_url"], key="wiz_cgt_url")
+
+        st.divider()
+        col_back, _, col_finish = st.columns([1, 3, 2])
+        if col_back.button("← Back"):
+            st.session_state.onb_step = 3
+            st.rerun()
+
+        finish_label = "✓ Finish Setup & Discover Accounts" if auto_discover else "✓ Finish Setup"
+        if col_finish.button(finish_label, type="primary"):
+            cfg["ii_request_delay"]["min"] = st.session_state.get("wiz_dmin", 1)
+            cfg["ii_request_delay"]["max"] = st.session_state.get("wiz_dmax", 3)
+            cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "https://app.getsoren.app")
+            api_key = st.session_state.get("wiz_cgt_key", "").strip()
+            if api_key:
+                cfg["cgt"]["api_key"] = api_key
+            else:
+                cfg["cgt"].pop("api_key", None)
+            st.session_state["wiz_finish_running"] = True
+            st.rerun()
+
+        if st.session_state.get("wiz_finish_running"):
+            tokens = st.session_state.get("wiz_tokens", {})
+            all_ok = True
+
+            if auto_discover:
+                for i, user in enumerate(cfg["users"]):
+                    tok = tokens.get(i, "").strip()
+                    if not tok:
+                        st.error(f"No token provided for **{user['email']}** — go back and paste one.")
+                        all_ok = False
+                        continue
+                    with st.status(f"Discovering accounts for {user['email']}…", expanded=True) as disc_status:
+                        ok, log = run_and_stream(["--discover", "--token", tok])
+                        discovered = None
+                        for line in log.splitlines():
+                            clean = strip_ansi(line).strip()
+                            if clean.startswith("DISCOVERED:"):
+                                try:
+                                    discovered = json.loads(clean[len("DISCOVERED:"):])
+                                except Exception:
+                                    pass
+                                break
+                        if discovered and ok:
+                            disc_status.update(label=f"✓ Found {len(discovered)} account(s)", state="complete")
+                            new_accounts = []
+                            for a in discovered:
+                                acct = {"id": a["id"], "name": a["name"],
+                                        "start_date": a["start_date"], "currencies": a["currencies"]}
+                                if a.get("currency_start_dates"):
+                                    acct["currency_start_dates"] = a["currency_start_dates"]
+                                new_accounts.append(acct)
+                            user["accounts"] = new_accounts
+                        else:
+                            disc_status.update(label=f"✗ Discovery failed for {user['email']}", state="error")
+                            all_ok = False
+
+            st.session_state["wiz_finish_running"] = False
+
+            if all_ok:
+                with open(CONFIG_FILE, "w") as f:
+                    yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                del st.session_state.wiz_cfg
+                st.session_state.pop("onb_step", None)
+                st.session_state.pop("onb_auto_discover", None)
+                st.session_state.pop("wiz_tokens", None)
+                st.rerun()
+            else:
+                st.error("Setup incomplete — fix the errors above and try again.")
 
 
 if not config:
     show_onboarding()
-    st.stop()
-
-if st.session_state.get("wiz_step") == 2:
-    show_bookmarklet_step()
     st.stop()
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -506,7 +640,10 @@ with tab_dl:
         help="If an account exists in your II config but not yet in Soren, create it automatically",
     )
     if not _cgt_key:
-        st.info("💡 Add a Soren API key in the **⚙️ Config** tab to enable pushing after download.")
+        st.info(
+            "💡 To push to Soren, you need an API key. "
+            "Get one from **Settings → API** inside Soren, then paste it in the **⚙️ Config** tab."
+        )
 
     with st.expander("Advanced options"):
         to_date = st.date_input(
@@ -609,7 +746,10 @@ with tab_push:
 
     _push_cgt_key = config.get("cgt", {}).get("api_key", "")
     if not _push_cgt_key:
-        st.info("💡 Add a Soren API key in the **⚙️ Config** tab to enable pushing.")
+        st.info(
+            "💡 To push to Soren, you need an API key. "
+            "Get one from **Settings → API** inside Soren, then paste it in the **⚙️ Config** tab."
+        )
 
     col_acct_push, col_create_push = st.columns(2)
     _push_acct_sel = col_acct_push.selectbox("Account", list(_push_acct_map.keys()),
@@ -637,7 +777,7 @@ with tab_push:
 
     if st.session_state.push_running:
         with st.status("Pushing to Soren…", expanded=True) as status:
-            ok, log = run_and_stream(st.session_state.push_args, st.session_state.push_env)
+            ok, log = run_and_stream(st.session_state.push_args, st.session_state.push_env, show_push_counter=True)
             status.update(
                 label="Push complete ✓" if ok else "Push failed ✗",
                 state="complete" if ok else "error",
@@ -711,7 +851,7 @@ with tab_cfg:
         "Soren API Key",
         value=cfg.get("cgt", {}).get("api_key", ""),
         key="cfg_cgt_key",
-        help="Long-lived API key — stored in config.yaml (which is gitignored)",
+        help="Get this from Settings → API in your Soren account. Stored in config.yaml (which is gitignored).",
     )
 
     # ── Users & accounts ──────────────────────────────────────────────────────
@@ -726,6 +866,58 @@ with tab_cfg:
                 cfg["users"].pop(i)
                 st.rerun()
 
+            # ── Auto-discover ─────────────────────────────────────────────────
+            col_tok, col_btn = st.columns([5, 1])
+            col_tok.text_input(
+                "II Bearer Token (for auto-discover)",
+                key=f"cfg_tok_{i}",
+                placeholder="eyJhbGci… paste to auto-discover accounts",
+                label_visibility="collapsed",
+            )
+            if col_btn.button("🔍 Discover", key=f"cfg_disc_{i}"):
+                tok = st.session_state.get(f"cfg_tok_{i}", "").strip()
+                if not tok:
+                    st.error("Paste a bearer token first.")
+                else:
+                    sync_form_to_cfg()
+                    st.session_state[f"cfg_disc_running_{i}"] = True
+                    st.session_state[f"cfg_disc_tok_{i}"] = tok
+                    st.rerun()
+
+            if st.session_state.get(f"cfg_disc_running_{i}"):
+                tok = st.session_state[f"cfg_disc_tok_{i}"]
+                with st.status("Discovering accounts…", expanded=True) as _ds:
+                    _ok, _log = run_and_stream(["--discover", "--token", tok])
+                    _discovered = None
+                    for _line in _log.splitlines():
+                        _clean = strip_ansi(_line).strip()
+                        if _clean.startswith("DISCOVERED:"):
+                            try:
+                                _discovered = json.loads(_clean[len("DISCOVERED:"):])
+                            except Exception:
+                                pass
+                            break
+                    if _discovered and _ok:
+                        _ds.update(label=f"✓ Found {len(_discovered)} account(s)", state="complete")
+                    else:
+                        _ds.update(label="✗ Discovery failed — check token", state="error")
+
+                st.session_state[f"cfg_disc_running_{i}"] = False
+                if _discovered and _ok:
+                    for _j in range(20):
+                        for _sfx in ["name", "id", "start", "cur"]:
+                            st.session_state.pop(f"u{i}_a{_j}_{_sfx}", None)
+                    new_accounts = []
+                    for _a in _discovered:
+                        _acct = {"id": _a["id"], "name": _a["name"],
+                                 "start_date": _a["start_date"], "currencies": _a["currencies"]}
+                        if _a.get("currency_start_dates"):
+                            _acct["currency_start_dates"] = _a["currency_start_dates"]
+                        new_accounts.append(_acct)
+                    user["accounts"] = new_accounts
+                st.rerun()
+
+            # ── Accounts ──────────────────────────────────────────────────────
             st.caption("**Accounts**")
 
             for j, acct in enumerate(user.get("accounts", [])):
