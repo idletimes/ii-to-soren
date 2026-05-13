@@ -21,6 +21,101 @@ st.set_page_config(
     layout="wide",
 )
 
+st.html(
+    """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      html, body, [class*="st-"], .stApp, button, input, textarea, select,
+      .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+      .stMarkdown, .stMarkdown * {
+        font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      }
+      [data-testid="stIconMaterial"],
+      [data-testid="stIconMaterial"] * {
+        font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+      }
+      .stApp { background: #f8fafc; color: #0f1f3d; }
+      .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+        color: #0f1f3d !important;
+        letter-spacing: -0.01em;
+        font-weight: 600 !important;
+      }
+      .stApp h1 { font-weight: 700 !important; }
+      a, a:visited { color: #0f766e; }
+      a:hover { color: #115e59; }
+
+      .stButton > button[kind="primary"],
+      .stDownloadButton > button[kind="primary"],
+      .stFormSubmitButton > button[kind="primary"] {
+        background: #0f766e;
+        border: 1px solid #0f766e;
+        color: #ffffff;
+        border-radius: 0.5rem;
+        font-weight: 500;
+      }
+      .stButton > button[kind="primary"]:hover,
+      .stDownloadButton > button[kind="primary"]:hover,
+      .stFormSubmitButton > button[kind="primary"]:hover {
+        background: #115e59;
+        border-color: #115e59;
+        color: #ffffff;
+      }
+      .stButton > button[kind="secondary"],
+      .stDownloadButton > button[kind="secondary"] {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        color: #0f1f3d;
+        border-radius: 0.5rem;
+        font-weight: 500;
+      }
+      .stButton > button[kind="secondary"]:hover,
+      .stDownloadButton > button[kind="secondary"]:hover {
+        border-color: #0f766e;
+        color: #0f766e;
+      }
+
+      .stTabs [data-baseweb="tab-list"] { gap: 1.75rem; border-bottom: 1px solid #e2e8f0; }
+      .stTabs [data-baseweb="tab"] { color: #475569; padding-left: 0.25rem; padding-right: 0.25rem; }
+      .stTabs [aria-selected="true"] { color: #0f766e !important; }
+      .stTabs [data-baseweb="tab-highlight"] { background-color: #0f766e !important; }
+
+      .stTextInput input, .stNumberInput input, .stDateInput input,
+      .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div,
+      .stMultiSelect div[data-baseweb="select"] > div {
+        border-radius: 0.375rem;
+        border-color: #e2e8f0;
+      }
+      .stTextInput input:focus, .stNumberInput input:focus, .stDateInput input:focus,
+      .stTextArea textarea:focus {
+        border-color: #0f766e;
+        box-shadow: 0 0 0 1px #0f766e;
+      }
+
+      [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 0.75rem;
+        border-color: #e2e8f0 !important;
+        background: #ffffff;
+      }
+
+      .stCode, pre, code {
+        background: #f1f5f9 !important;
+        color: #0f1f3d !important;
+        border-radius: 0.375rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      }
+
+      .stAlert { border-radius: 0.5rem; border: 1px solid #e2e8f0; }
+      div[data-baseweb="notification"] { border-radius: 0.5rem; }
+
+      hr { border-color: #e2e8f0 !important; }
+
+      .stCaption, [data-testid="stCaptionContainer"] { color: #64748b; }
+    </style>
+    """
+)
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_config():
@@ -633,12 +728,18 @@ with tab_dl:
         disabled=st.session_state.dl_running or not _cgt_key,
         help=None if _cgt_key else "Add a Soren API key in ⚙️ Config to enable this",
     )
-    dl_create_accounts = col_create.checkbox(
-        "Create missing Soren accounts",
-        value=True,
-        disabled=st.session_state.dl_running or not _cgt_key or not also_push,
-        help="If an account exists in your II config but not yet in Soren, create it automatically",
-    )
+    if "dl_create_accounts_pref" not in st.session_state:
+        st.session_state.dl_create_accounts_pref = True
+    if also_push:
+        dl_create_accounts = col_create.checkbox(
+            "Create missing Soren accounts",
+            value=st.session_state.dl_create_accounts_pref,
+            disabled=st.session_state.dl_running or not _cgt_key,
+            help="If an account exists in your II config but not yet in Soren, create it automatically",
+        )
+        st.session_state.dl_create_accounts_pref = dl_create_accounts
+    else:
+        dl_create_accounts = False
     if not _cgt_key:
         st.info(
             "💡 To push to Soren, you need an API key. "
