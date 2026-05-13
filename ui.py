@@ -184,7 +184,69 @@ def run_all_users(user_tokens, common_args):
         counter_box.caption(f"📥 **{files_saved} file{'s' if files_saved != 1 else ''} processed**" +
                             (f" — {current_op}" if current_op else ""))
 
+    def _load_cfg():
+        if not CONFIG_FILE.exists():
+            return {}
+        with open(CONFIG_FILE) as f:
+            return yaml.safe_load(f) or {}
+
+    def _save_cfg(c):
+        with open(CONFIG_FILE, "w") as f:
+            yaml.dump(c, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    auto_discover = _load_cfg().get("auto_discover", True)
+
     for email, token in user_tokens.items():
+        if auto_discover:
+            current_op = f"discovering accounts — {email}"
+            update_counter()
+            disc_proc = subprocess.Popen(
+                [sys.executable, "ii_download.py", "--discover", "--token", token],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                cwd=Path(__file__).parent,
+            )
+            discovered = None
+            for line in disc_proc.stdout:
+                clean = strip_ansi(line)
+                stripped = clean.strip()
+                if stripped.startswith("DISCOVERED:"):
+                    try:
+                        discovered = json.loads(stripped[len("DISCOVERED:"):])
+                    except Exception:
+                        pass
+                    continue
+                all_lines.append(clean)
+                output_box.code("".join(all_lines), language=None)
+            disc_proc.wait()
+            if disc_proc.returncode == 0 and discovered is not None:
+                cfg_now = _load_cfg()
+                changed = False
+                for u in cfg_now.get("users", []):
+                    if u.get("email") == email:
+                        existing_ids = {a.get("id") for a in u.get("accounts", [])}
+                        for a in discovered:
+                            if a["id"] in existing_ids:
+                                continue
+                            acct = {"id": a["id"], "name": a["name"],
+                                    "start_date": a["start_date"],
+                                    "currencies": a["currencies"]}
+                            if a.get("currency_start_dates"):
+                                acct["currency_start_dates"] = a["currency_start_dates"]
+                            u.setdefault("accounts", []).append(acct)
+                            changed = True
+                            all_lines.append(f"  → new account discovered: {acct['name']} ({acct['id']})\n")
+                        break
+                if changed:
+                    _save_cfg(cfg_now)
+                    all_lines.append(f"  → config.yaml updated with new accounts for {email}\n")
+                output_box.code("".join(all_lines), language=None)
+            else:
+                all_lines.append(f"  → discovery failed for {email} — continuing with existing accounts\n")
+                output_box.code("".join(all_lines), language=None)
+
         args = ["--user", email, "--token", token] + common_args
         proc = subprocess.Popen(
             [sys.executable, "ii_download.py"] + args,
@@ -499,7 +561,7 @@ Nothing is sent anywhere. The token never leaves your browser.
 
         for i, user in enumerate(cfg["users"]):
             with st.container(border=True):
-                st.markdown(f"**{user['email']}**")
+                st.markdown(f"**{user['email'].replace('@', '@​')}**")
 
                 st.text_input(
                     "II Bearer Token",
@@ -761,7 +823,7 @@ with tab_dl:
         _email = _u["email"]
         _tok_key = f"ii_tok_{_email}"
         col_e, col_t = st.columns([2, 3])
-        col_e.markdown(f"**{_email}**")
+        col_e.markdown(f"**{_email.replace('@', '@​')}**")
 
         def _make_save(_e=_email, _k=_tok_key):
             def _cb(): st.session_state.ii_tokens[_e] = st.session_state[_k]
@@ -772,7 +834,7 @@ with tab_dl:
             value=st.session_state.ii_tokens.get(_email, ""),
             key=_tok_key,
             on_change=_make_save(),
-            placeholder="Paste token — use the 🔖 Bookmarklet tab",
+            placeholder="Paste the ii token (use the 🔖 Bookmarklet)",
             label_visibility="collapsed",
             disabled=st.session_state.dl_running,
         )
@@ -907,6 +969,7 @@ def sync_form_to_cfg():
     cfg = st.session_state.cfg_edit
     cfg.setdefault("ii_request_delay", {})["min"] = st.session_state.get("cfg_delay_min", 1)
     cfg["ii_request_delay"]["max"] = st.session_state.get("cfg_delay_max", 3)
+    cfg["auto_discover"] = st.session_state.get("cfg_auto_discover", True)
     cfg.setdefault("cgt", {})["api_url"] = st.session_state.get("cfg_cgt_url", "")
     _key = st.session_state.get("cfg_cgt_key", "").strip()
     if _key:
@@ -958,64 +1021,20 @@ with tab_cfg:
     # ── Users & accounts ──────────────────────────────────────────────────────
     st.subheader("Users & Accounts")
 
+    st.checkbox(
+        "Auto-discover new accounts on download",
+        value=cfg.get("auto_discover", True),
+        key="cfg_auto_discover",
+        help="Before each download, query the ii API with your bearer token to find any newly-opened accounts and add them automatically.",
+    )
+
     for i, user in enumerate(cfg.get("users", [])):
-        with st.expander(f"👤  {user.get('email', 'New User')}", expanded=True):
+        with st.expander(f"👤  {user.get('email', 'New User').replace('@', '@​')}", expanded=True):
             col_e, col_del = st.columns([4, 1])
             col_e.text_input("Email", value=user.get("email", ""), key=f"u{i}_email")
             if col_del.button("🗑 Remove user", key=f"del_user_{i}"):
                 sync_form_to_cfg()
                 cfg["users"].pop(i)
-                st.rerun()
-
-            # ── Auto-discover ─────────────────────────────────────────────────
-            col_tok, col_btn = st.columns([5, 1])
-            col_tok.text_input(
-                "II Bearer Token (for auto-discover)",
-                key=f"cfg_tok_{i}",
-                placeholder="eyJhbGci… paste to auto-discover accounts",
-                label_visibility="collapsed",
-            )
-            if col_btn.button("🔍 Discover", key=f"cfg_disc_{i}"):
-                tok = st.session_state.get(f"cfg_tok_{i}", "").strip()
-                if not tok:
-                    st.error("Paste a bearer token first.")
-                else:
-                    sync_form_to_cfg()
-                    st.session_state[f"cfg_disc_running_{i}"] = True
-                    st.session_state[f"cfg_disc_tok_{i}"] = tok
-                    st.rerun()
-
-            if st.session_state.get(f"cfg_disc_running_{i}"):
-                tok = st.session_state[f"cfg_disc_tok_{i}"]
-                with st.status("Discovering accounts…", expanded=True) as _ds:
-                    _ok, _log = run_and_stream(["--discover", "--token", tok])
-                    _discovered = None
-                    for _line in _log.splitlines():
-                        _clean = strip_ansi(_line).strip()
-                        if _clean.startswith("DISCOVERED:"):
-                            try:
-                                _discovered = json.loads(_clean[len("DISCOVERED:"):])
-                            except Exception:
-                                pass
-                            break
-                    if _discovered and _ok:
-                        _ds.update(label=f"✓ Found {len(_discovered)} account(s)", state="complete")
-                    else:
-                        _ds.update(label="✗ Discovery failed — check token", state="error")
-
-                st.session_state[f"cfg_disc_running_{i}"] = False
-                if _discovered and _ok:
-                    for _j in range(20):
-                        for _sfx in ["name", "id", "start", "cur"]:
-                            st.session_state.pop(f"u{i}_a{_j}_{_sfx}", None)
-                    new_accounts = []
-                    for _a in _discovered:
-                        _acct = {"id": _a["id"], "name": _a["name"],
-                                 "start_date": _a["start_date"], "currencies": _a["currencies"]}
-                        if _a.get("currency_start_dates"):
-                            _acct["currency_start_dates"] = _a["currency_start_dates"]
-                        new_accounts.append(_acct)
-                    user["accounts"] = new_accounts
                 st.rerun()
 
             # ── Accounts ──────────────────────────────────────────────────────
