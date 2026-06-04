@@ -129,6 +129,58 @@ def strip_ansi(text):
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
+def extract_errors(log):
+    """Pull failure lines out of a run log so they can be surfaced above the
+    full log instead of being buried in it. Returns a list of short strings.
+
+    The CLI's Summary / Push Summary blocks already emit one deduplicated
+    `[FAIL] ...` line per failed item — those are authoritative, so we prefer
+    them. We only fall back to inline markers (a crashed subprocess, a failed
+    discovery) when no summary block was reached."""
+    fails, inline = [], []
+    for raw in log.splitlines():
+        line = strip_ansi(raw).strip()
+        if not line:
+            continue
+        if line.startswith("[FAIL]"):
+            fails.append(line[len("[FAIL]"):].strip())
+        elif line.endswith("delete failed") or "failed — skipping" in line:
+            inline.append(line)
+        elif line.startswith("Discovery failed") or "discovery failed for" in line:
+            inline.append(line)
+        elif line.startswith("Traceback (most recent call last)"):
+            inline.append("Unhandled error — see traceback in logs")
+    result = fails if fails else inline
+    seen, out = set(), []
+    for e in result:
+        if e not in seen:
+            seen.add(e)
+            out.append(e)
+    return out
+
+
+def render_run_result(ok, log, label):
+    """Render the outcome of a run: a success/error banner, an error summary
+    lifted out of the log when something failed, then the full log."""
+    if ok:
+        st.success(f"✓ {label} completed successfully")
+        with st.expander("View logs"):
+            st.code(log, language=None)
+        return
+
+    errs = extract_errors(log)
+    if errs:
+        count = f"{len(errs)} issue{'s' if len(errs) != 1 else ''}"
+        st.error(
+            f"✗ {label} failed — {count}:\n\n"
+            + "\n".join(f"- `{e}`" for e in errs)
+        )
+    else:
+        st.error(f"✗ {label} failed — see logs below")
+    with st.expander("View logs", expanded=True):
+        st.code(log, language=None)
+
+
 def run_and_stream(args, env_extra=None, show_push_counter=False):
     """Run ii_download.py, streaming output into a st.code block.
     Returns (success: bool, log: str)."""
@@ -885,12 +937,8 @@ with tab_dl:
         st.rerun()
 
     if st.session_state.dl_last_ok is not None:
-        if st.session_state.dl_last_ok:
-            st.success("✓ Download completed successfully")
-        else:
-            st.error("✗ Download failed — see logs below")
-        with st.expander("View logs"):
-            st.code(st.session_state.dl_last_log, language=None)
+        render_run_result(st.session_state.dl_last_ok,
+                          st.session_state.dl_last_log, "Download")
 
 
 # ─── Push ─────────────────────────────────────────────────────────────────────
@@ -951,12 +999,8 @@ with tab_push:
         st.rerun()
 
     if st.session_state.push_last_ok is not None:
-        if st.session_state.push_last_ok:
-            st.success("✓ Push completed successfully")
-        else:
-            st.error("✗ Push failed — see logs below")
-        with st.expander("View logs"):
-            st.code(st.session_state.push_last_log, language=None)
+        render_run_result(st.session_state.push_last_ok,
+                          st.session_state.push_last_log, "Push")
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────
