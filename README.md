@@ -17,93 +17,47 @@ It comes with both a **Streamlit web UI** (recommended) and a **CLI** for script
 
 > If you're comfortable with Python and the command line, the short version is: clone the repo, `pip install -r requirements.txt`, then `streamlit run ui.py`. The first-run wizard in the UI handles the rest.
 >
-> If any of that is unfamiliar, follow the step-by-step guide for your operating system below.
+> If any of that is unfamiliar, follow the step-by-step guide for your operating system below — you won't need to touch the command line.
 
-<details>
-<summary><strong>🍎 Mac — step by step</strong></summary>
+### 1. Install Python (once)
 
-### 1. Install Python
+The app needs Python 3.10 or later. To check whether you already have it, or to install it, go to [python.org/downloads](https://www.python.org/downloads/) and run the latest installer.
 
-Check if you already have Python 3.10 or later:
-
-1. Open **Terminal** (press `⌘ Space`, type `Terminal`, hit Enter)
-2. Type `python3 --version` and press Enter
-
-If you see something like `Python 3.11.4` you're good. If you get an error or a version below 3.10, download the latest Python installer from [python.org/downloads](https://www.python.org/downloads/) and run it.
+> **Windows:** on the first screen of the installer, tick the box that says **"Add Python to PATH"** before clicking Install.
 
 ### 2. Download this project
 
-On this GitHub page, click the green **Code** button → **Download ZIP**. Once downloaded, unzip it — you'll get a folder called `ii-to-soren-main`. Move it somewhere convenient, like your Desktop or Documents.
+On this GitHub page, click the green **Code** button → **Download ZIP**. Then unzip it (on Windows, right-click → **Extract All**) and move the resulting folder somewhere convenient, like your Desktop or Documents.
 
-### 3. Open Terminal in the project folder
+### 3. Start the app — just double-click
 
-Open Terminal and navigate to the folder you just unzipped. The easiest way:
+Open the project folder and double-click the launcher for your system:
 
-- Type `cd ` (with a space after it) in Terminal
-- Drag the `ii-to-soren-main` folder from Finder into the Terminal window — it fills in the path automatically
-- Press Enter
+| System | File to double-click |
+|--------|----------------------|
+| 🍎 Mac | **`Start.command`** |
+| 🪟 Windows | **`Start.bat`** |
 
-### 4. Install dependencies
+The first time you run it, a window opens and spends a minute setting things up and downloading the libraries the app needs. After that it starts in seconds. When it's ready, the app opens automatically in your browser at `http://localhost:8501` and walks you through the rest of the setup.
 
-Copy and paste this into Terminal and press Enter:
+To stop the app, go back to that window and press `Ctrl-C`, then close it.
 
-```bash
-pip3 install -r requirements.txt
-```
+<details>
+<summary>Mac: "Apple could not verify…" or "unidentified developer"</summary>
 
-This downloads the libraries the app needs. It only needs to be done once.
-
-### 5. Start the app
-
-```bash
-streamlit run ui.py
-```
-
-Your browser should open automatically at `http://localhost:8501`. If it doesn't, open your browser and go to that address. The app will walk you through the rest of the setup.
-
-To stop the app, go back to Terminal and press `Ctrl C`.
+Because the launcher is downloaded from the internet, macOS may block it the first time. To allow it, **right-click `Start.command` → Open**, then click **Open** in the dialog. You only need to do this once. (If double-clicking opens the file in a text editor instead of running it, right-click → Open still works.)
 
 </details>
 
 <details>
-<summary><strong>🪟 Windows — step by step</strong></summary>
+<summary>Prefer the command line?</summary>
 
-### 1. Install Python
+The launchers just automate the usual steps. You can always do it by hand instead:
 
-1. Go to [python.org/downloads](https://www.python.org/downloads/) and download the latest Python installer
-2. Run the installer — **important:** on the first screen, tick the box that says **"Add Python to PATH"** before clicking Install
-3. Once installed, open **Command Prompt** (press `Windows key`, type `cmd`, hit Enter)
-4. Type `python --version` and press Enter — you should see something like `Python 3.12.3`
-
-### 2. Download this project
-
-On this GitHub page, click the green **Code** button → **Download ZIP**. Once downloaded, right-click the ZIP and choose **Extract All**. Move the extracted folder somewhere convenient, like your Desktop or Documents.
-
-### 3. Open Command Prompt in the project folder
-
-1. Open the extracted `ii-to-soren-main` folder in File Explorer
-2. Click the address bar at the top of the window (where it shows the folder path)
-3. Type `cmd` and press Enter — a Command Prompt window opens already in the right folder
-
-### 4. Install dependencies
-
-Type this and press Enter:
-
-```
+```bash
 pip install -r requirements.txt
-```
-
-This downloads the libraries the app needs. It only needs to be done once.
-
-### 5. Start the app
-
-```
 streamlit run ui.py
 ```
-
-Your browser should open automatically at `http://localhost:8501`. If it doesn't, open your browser and go to that address. The app will walk you through the rest of the setup.
-
-To stop the app, go back to Command Prompt and press `Ctrl C`.
 
 </details>
 
