@@ -4,6 +4,20 @@ A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) 
 
 It comes with both a **Streamlit web UI** (recommended) and a **CLI** for scripting / automation.
 
+> **Never used GitHub, the terminal, or Python before?** Don't worry — you don't need to know any of it. Just follow the **[step-by-step setup](#setup)** for your computer below and copy-paste each command exactly as shown. It takes about 10 minutes the first time, and you only do it once.
+
+## 🧰 The apps you'll use
+
+You'll touch a few apps during setup. Here's what each one is and where it comes from, so nothing below is a surprise:
+
+| | App | What it is | Do you install it? |
+|---|------|------------|--------------------|
+| 🐍 | **Python** | The programming language this tool is built on. The tool can't run without it. | Yes — once, in step 1 |
+| ⌨️ | **Terminal** (Mac) / **Command Prompt** (Windows) | A window where you type commands. It comes built into your computer. | No — already installed |
+| 🌐 | **Web browser** (Chrome, Safari, Edge…) | Where the app's screen opens, and where you log into Interactive Investor. | No — already installed |
+| 💷 | **[Interactive Investor](https://www.ii.co.uk/)** | Your investment account. The tool downloads your data from here. | No — you already have an account |
+| 🌲 | **[Soren](https://www.getsoren.app)** | Where your data gets sent for Capital Gains Tax calculations. | No — sign up online (optional) |
+
 ## What it downloads
 
 | Data | Format | Notes |
@@ -15,59 +29,143 @@ It comes with both a **Streamlit web UI** (recommended) and a **CLI** for script
 
 ## Setup
 
-> If you're comfortable with Python and the command line, the short version is: clone the repo, `pip install -r requirements.txt`, then `streamlit run ui.py`. The first-run wizard in the UI handles the rest.
->
-> If any of that is unfamiliar, follow the step-by-step guide for your operating system below — you won't need to touch the command line.
+Pick the guide for your computer and follow it top to bottom. **You'll do steps 1–4 once ever**, then step 5 each time you want to download data.
 
-### 1. Install Python (once)
+> 💡 **In a hurry and already comfortable with the command line?** Clone the repo, run `pip install -r requirements.txt`, then `streamlit run ui.py`. The first-run wizard in the UI handles the rest. Otherwise, ignore this and use the step-by-step guide below.
 
-The app needs Python 3.10 or later. To check whether you already have it, or to install it, go to [python.org/downloads](https://www.python.org/downloads/) and run the latest installer.
+<details open>
+<summary><strong>🍎 &nbsp;Mac — step by step</strong></summary>
 
-> **Windows:** on the first screen of the installer, tick the box that says **"Add Python to PATH"** before clicking Install.
+<br>
 
-### 2. Download this project
+#### 🐍 Step 1 — Install Python
 
-On this GitHub page, click the green **Code** button → **Download ZIP**. Then unzip it (on Windows, right-click → **Extract All**) and move the resulting folder somewhere convenient, like your Desktop or Documents.
+First check whether you already have it:
 
-### 3. Start the app — just double-click
+1. Open the **Terminal** app — press `⌘ Space` (Command + Spacebar), type `Terminal`, and press Enter. A plain window with a text prompt opens. This is where you'll type the commands below.
+2. Click in that window, type this, and press Enter:
 
-Open the project folder and double-click the launcher for your system:
+   ```bash
+   python3 --version
+   ```
 
-| System | File to double-click |
-|--------|----------------------|
-| 🍎 Mac | **`Start.command`** |
-| 🪟 Windows | **`Start.bat`** |
+3. If you see something like `Python 3.11.4` (any version **3.10 or higher**), you already have Python — **skip to step 2**.
+4. If you see an error, or a number below 3.10: go to [python.org/downloads](https://www.python.org/downloads/), click the big yellow **Download Python** button, open the file that downloads, and click through the installer (the default options are fine). Then close and reopen Terminal.
 
-The first time you run it, a window opens and spends a minute setting things up and downloading the libraries the app needs. After that it starts in seconds. When it's ready, the app opens automatically in your browser at `http://localhost:8501` and walks you through the rest of the setup.
+#### 📥 Step 2 — Download this project
 
-To stop the app, go back to that window and press `Ctrl-C`, then close it.
+1. At the top of [this GitHub page](.), click the green **`< > Code`** button.
+2. In the menu that drops down, click **Download ZIP**.
+3. Find the downloaded ZIP (usually in your **Downloads** folder) and double-click it to unzip. You'll get a folder called **`ii-to-soren-main`**.
+4. Drag that folder somewhere easy to find, like your **Desktop**.
 
-<details>
-<summary>Mac: "Apple could not verify…" or "unidentified developer"</summary>
+#### 📂 Step 3 — Point Terminal at that folder
 
-Because the launcher is downloaded from the internet, macOS may block it the first time. To allow it, **right-click `Start.command` → Open**, then click **Open** in the dialog. You only need to do this once. (If double-clicking opens the file in a text editor instead of running it, right-click → Open still works.)
+Terminal needs to be "inside" the project folder before it can run the app. The easy way:
 
-</details>
+1. In your Terminal window, type `cd` followed by a single space (don't press Enter yet):
 
-<details>
-<summary>Prefer the command line?</summary>
+   ```bash
+   cd 
+   ```
 
-The launchers just automate the usual steps. You can always do it by hand instead:
+2. Open **Finder**, drag the **`ii-to-soren-main`** folder right into the Terminal window, and let go. Terminal fills in the folder's location for you.
+3. Now press Enter.
+
+#### 📦 Step 4 — Install the bits the app needs
+
+Copy and paste this line into Terminal and press Enter:
 
 ```bash
-pip install -r requirements.txt
-streamlit run ui.py
+python3 -m pip install -r requirements.txt
 ```
+
+This downloads the building blocks the tool relies on. **You only need to do this once**, and it may take a minute or two. (Lots of text will scroll past — that's normal.)
+
+#### ▶️ Step 5 — Start the app
+
+```bash
+python3 -m streamlit run ui.py
+```
+
+Your 🌐 **web browser** should open automatically at `http://localhost:8501`, showing the app. (If it doesn't open on its own, open your browser and type that address into the bar at the top.) From here the app walks you through everything else on screen.
+
+➡️ **When you're done**, go back to Terminal and press `Ctrl C` (hold Control, tap C) to stop the app.
+
+> 🆘 **Something not working?**
+> - **"command not found: python3"** → Python isn't installed yet. Go back to step 1.
+> - **"can't open file… No such file or directory"** → Terminal isn't in the project folder. Redo step 3, then try again.
 
 </details>
 
-## Getting an II Bearer token
+<details>
+<summary><strong>🪟 &nbsp;Windows — step by step</strong></summary>
 
-The II API requires an authenticated session token. The easiest way to get one is via the **bookmarklet** — a one-click button you add to your browser's bookmarks bar that copies the token for you.
+<br>
 
-When you first run the UI it walks you through bookmarklet setup automatically.
+#### 🐍 Step 1 — Install Python
 
-Alternatively, you can get a token manually:
+1. Go to [python.org/downloads](https://www.python.org/downloads/) and click the big yellow **Download Python** button.
+2. Open the file that downloads to start the installer.
+3. ⚠️ **This is the important bit:** on the very first installer screen, tick the checkbox at the bottom that says **"Add Python to PATH"** *before* you click **Install Now**. If you miss it, the commands later won't work.
+4. When it finishes, open **Command Prompt** — press the `Windows` key, type `cmd`, and press Enter. A plain black window opens. This is where you'll type the commands below.
+5. To check it worked, type this and press Enter — you should see something like `Python 3.12.3`:
+
+   ```
+   python --version
+   ```
+
+#### 📥 Step 2 — Download this project
+
+1. At the top of [this GitHub page](.), click the green **`< > Code`** button.
+2. In the menu that drops down, click **Download ZIP**.
+3. Find the downloaded ZIP (usually in your **Downloads** folder), right-click it, and choose **Extract All…**, then **Extract**. You'll get a folder called **`ii-to-soren-main`**.
+4. Move that folder somewhere easy to find, like your **Desktop**.
+
+#### 📂 Step 3 — Point Command Prompt at that folder
+
+1. Open the **`ii-to-soren-main`** folder in File Explorer so you can see the files inside it.
+2. Click the **address bar** at the top of the window (the strip showing the folder path) so it highlights.
+3. Type `cmd` over the highlighted path and press Enter. A Command Prompt window opens, already pointed at the right folder.
+
+#### 📦 Step 4 — Install the bits the app needs
+
+Type this and press Enter:
+
+```
+python -m pip install -r requirements.txt
+```
+
+This downloads the building blocks the tool relies on. **You only need to do this once**, and it may take a minute or two. (Lots of text will scroll past — that's normal.)
+
+#### ▶️ Step 5 — Start the app
+
+```
+python -m streamlit run ui.py
+```
+
+Your 🌐 **web browser** should open automatically at `http://localhost:8501`, showing the app. (If it doesn't open on its own, open your browser and type that address into the bar at the top.) From here the app walks you through everything else on screen.
+
+➡️ **When you're done**, go back to Command Prompt and press `Ctrl C` (hold Control, tap C) to stop the app.
+
+> 🆘 **Something not working?**
+> - **"'python' is not recognized…"** → Python was installed without the **"Add Python to PATH"** box ticked. Re-run the installer from step 1 and tick it this time.
+> - **"can't open file… No such file or directory"** → Command Prompt isn't in the project folder. Redo step 3, then try again.
+
+</details>
+
+## 🔑 Logging into Interactive Investor (the "token")
+
+To download your data, the tool needs proof that you're logged into Interactive Investor. That proof is a long code called a **token**.
+
+**You don't need to understand any of this.** When you first run the app, it shows you a simple **one-click button** (a "bookmarklet") that you drag onto your browser's bookmarks bar. After that, getting a fresh token is a single click whenever the app asks for one. Just follow the on-screen instructions — there's nothing to set up here in advance.
+
+> ⏱️ Tokens expire after about **28 minutes**, so the app will occasionally ask you to click the button again for a fresh one. That's normal.
+
+<details>
+<summary>Advanced: grab a token by hand (most people can ignore this)</summary>
+
+<br>
 
 1. Log into [ii.co.uk](https://www.ii.co.uk/) in your browser
 2. Open DevTools → **Network** tab
@@ -75,9 +173,11 @@ Alternatively, you can get a token manually:
 4. Find any request to `api-prod.ii.co.uk`
 5. Copy the `Authorization: Bearer eyJ…` header value
 
-Tokens expire after ~28 minutes.
+</details>
 
-## Web UI
+## 🖥️ Web UI
+
+This is the screen that opens in your browser in step 5 above. To start it again later, repeat step 5 for your computer (open Terminal / Command Prompt in the project folder, then run the start command).
 
 ```bash
 streamlit run ui.py
@@ -90,7 +190,7 @@ The UI guides you through initial setup and lets you:
 - Optionally push to Soren immediately after downloading
 - View live output and a success/failure summary
 
-## CLI usage
+## Command line usage
 
 ```bash
 # Download everything for all configured users (prompts for token per user)
