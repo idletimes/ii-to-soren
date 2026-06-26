@@ -4,7 +4,7 @@ A tool to download your data from [Interactive Investor](https://www.ii.co.uk/) 
 
 It comes with both a **Streamlit web UI** (recommended) and a **CLI** for scripting / automation.
 
-> **Never used GitHub, the terminal, or Python before?** Don't worry — you don't need to know any of it. Just follow the **[step-by-step setup](#setup)** for your computer below and copy-paste each command exactly as shown. It takes about 10 minutes the first time, and you only do it once.
+> **Never used GitHub, the terminal, or Python before?** Don't worry — you don't need to know any of it. The **[step-by-step setup](#setup)** below is just *install Python → download this project → double-click a file*. No commands to type. It takes about 10 minutes the first time, and most of that is set up once and never again.
 
 ## 🧰 The apps you'll use
 
@@ -13,7 +13,7 @@ You'll touch a few apps during setup. Here's what each one is and where it comes
 | | App | What it is | Do you install it? |
 |---|------|------------|--------------------|
 | 🐍 | **Python** | The programming language this tool is built on. The tool can't run without it. | Yes — once, in step 1 |
-| ⌨️ | **Terminal** (Mac) / **Command Prompt** (Windows) | A window where you type commands. It comes built into your computer. | No — already installed |
+| ⌨️ | **Terminal** (Mac) / **Command Prompt** (Windows) | A black window that pops up when you start the app. Built into your computer — you mostly just watch it. | No — already installed |
 | 🌐 | **Web browser** (Chrome, Safari, Edge…) | Where the app's screen opens, and where you log into Interactive Investor. | No — already installed |
 | 💷 | **[Interactive Investor](https://www.ii.co.uk/)** | Your investment account. The tool downloads your data from here. | No — you already have an account |
 | 🌲 | **[Soren](https://www.getsoren.app)** | Where your data gets sent for Capital Gains Tax calculations. | No — sign up online (optional) |
@@ -29,9 +29,7 @@ You'll touch a few apps during setup. Here's what each one is and where it comes
 
 ## Setup
 
-Pick the guide for your computer and follow it top to bottom. **You'll do steps 1–4 once ever**, then step 5 each time you want to download data.
-
-> 💡 **In a hurry and already comfortable with the command line?** Clone the repo, run `pip install -r requirements.txt`, then `streamlit run ui.py`. The first-run wizard in the UI handles the rest. Otherwise, ignore this and use the step-by-step guide below.
+There are just **three things to do**: install Python, download this project, then double-click the start file. No typing commands required — pick the guide for your computer below.
 
 <details open>
 <summary><strong>🍎 &nbsp;Mac — step by step</strong></summary>
@@ -40,17 +38,9 @@ Pick the guide for your computer and follow it top to bottom. **You'll do steps 
 
 #### 🐍 Step 1 — Install Python
 
-First check whether you already have it:
+Python is the engine this tool runs on. To install it: go to [python.org/downloads](https://www.python.org/downloads/), click the big yellow **Download Python** button, open the file that downloads, and click through the installer (the default options are fine).
 
-1. Open the **Terminal** app — press `⌘ Space` (Command + Spacebar), type `Terminal`, and press Enter. A plain window with a text prompt opens. This is where you'll type the commands below.
-2. Click in that window, type this, and press Enter:
-
-   ```bash
-   python3 --version
-   ```
-
-3. If you see something like `Python 3.11.4` (any version **3.10 or higher**), you already have Python — **skip to step 2**.
-4. If you see an error, or a number below 3.10: go to [python.org/downloads](https://www.python.org/downloads/), click the big yellow **Download Python** button, open the file that downloads, and click through the installer (the default options are fine). Then close and reopen Terminal.
+> Already have Python 3.10 or newer? You can skip this — but if you're not sure, just install it anyway. Installing again does no harm.
 
 #### 📥 Step 2 — Download this project
 
@@ -59,42 +49,39 @@ First check whether you already have it:
 3. Find the downloaded ZIP (usually in your **Downloads** folder) and double-click it to unzip. You'll get a folder called **`ii-to-soren-main`**.
 4. Drag that folder somewhere easy to find, like your **Desktop**.
 
-#### 📂 Step 3 — Point Terminal at that folder
+#### ▶️ Step 3 — Double-click to start
 
-Terminal needs to be "inside" the project folder before it can run the app. The easy way:
+1. Open the **`ii-to-soren-main`** folder.
+2. Double-click the file named **`Start.command`**.
 
-1. In your Terminal window, type `cd` followed by a single space (don't press Enter yet):
+That's it. A black window appears and sets everything up for you (the very first time this takes a minute or two — after that it's quick). Then your 🌐 **web browser** opens automatically showing the app, and it walks you through everything else on screen.
 
-   ```bash
-   cd 
-   ```
+> 🛡️ **First time: "Apple could not verify…" or "unidentified developer"?**
+> macOS is cautious about files from the internet. To get past it just once:
+> 1. **Right-click** (or hold `Control` and click) `Start.command`, then choose **Open**.
+> 2. In the box that pops up, click **Open** again.
+>
+> After you've done this once, plain double-clicking works from then on.
 
-2. Open **Finder**, drag the **`ii-to-soren-main`** folder right into the Terminal window, and let go. Terminal fills in the folder's location for you.
-3. Now press Enter.
+➡️ **When you're done**, click the black window and press `Ctrl C` (hold Control, tap C) to stop the app, then close the window. **Next time**, you only need this step 3 — just double-click `Start.command` again.
 
-#### 📦 Step 4 — Install the bits the app needs
+> 🆘 **It says Python wasn't found?** Python isn't installed yet (or the window opened before installation finished). Do step 1, then double-click `Start.command` again.
 
-Copy and paste this line into Terminal and press Enter:
+<br>
+
+<details>
+<summary>Prefer to type commands yourself? (optional)</summary>
+
+<br>
+
+If you'd rather not use the double-click launcher, open **Terminal**, drag the project folder in after typing `cd ` (with a trailing space) and press Enter, then run:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt   # once
+python3 -m streamlit run ui.py               # each time
 ```
 
-This downloads the building blocks the tool relies on. **You only need to do this once**, and it may take a minute or two. (Lots of text will scroll past — that's normal.)
-
-#### ▶️ Step 5 — Start the app
-
-```bash
-python3 -m streamlit run ui.py
-```
-
-Your 🌐 **web browser** should open automatically at `http://localhost:8501`, showing the app. (If it doesn't open on its own, open your browser and type that address into the bar at the top.) From here the app walks you through everything else on screen.
-
-➡️ **When you're done**, go back to Terminal and press `Ctrl C` (hold Control, tap C) to stop the app.
-
-> 🆘 **Something not working?**
-> - **"command not found: python3"** → Python isn't installed yet. Go back to step 1.
-> - **"can't open file… No such file or directory"** → Terminal isn't in the project folder. Redo step 3, then try again.
+</details>
 
 </details>
 
@@ -105,15 +92,13 @@ Your 🌐 **web browser** should open automatically at `http://localhost:8501`, 
 
 #### 🐍 Step 1 — Install Python
 
+Python is the engine this tool runs on.
+
 1. Go to [python.org/downloads](https://www.python.org/downloads/) and click the big yellow **Download Python** button.
 2. Open the file that downloads to start the installer.
-3. ⚠️ **This is the important bit:** on the very first installer screen, tick the checkbox at the bottom that says **"Add Python to PATH"** *before* you click **Install Now**. If you miss it, the commands later won't work.
-4. When it finishes, open **Command Prompt** — press the `Windows` key, type `cmd`, and press Enter. A plain black window opens. This is where you'll type the commands below.
-5. To check it worked, type this and press Enter — you should see something like `Python 3.12.3`:
+3. ⚠️ **This is the important bit:** on the very first installer screen, tick the checkbox at the bottom that says **"Add Python to PATH"** *before* you click **Install Now**. If you miss it, the start file won't be able to find Python.
 
-   ```
-   python --version
-   ```
+> Already have Python 3.10 or newer? You can skip this — but if you're not sure, install it anyway (and still tick "Add Python to PATH"). Installing again does no harm.
 
 #### 📥 Step 2 — Download this project
 
@@ -122,35 +107,35 @@ Your 🌐 **web browser** should open automatically at `http://localhost:8501`, 
 3. Find the downloaded ZIP (usually in your **Downloads** folder), right-click it, and choose **Extract All…**, then **Extract**. You'll get a folder called **`ii-to-soren-main`**.
 4. Move that folder somewhere easy to find, like your **Desktop**.
 
-#### 📂 Step 3 — Point Command Prompt at that folder
+#### ▶️ Step 3 — Double-click to start
 
-1. Open the **`ii-to-soren-main`** folder in File Explorer so you can see the files inside it.
-2. Click the **address bar** at the top of the window (the strip showing the folder path) so it highlights.
-3. Type `cmd` over the highlighted path and press Enter. A Command Prompt window opens, already pointed at the right folder.
+1. Open the **`ii-to-soren-main`** folder.
+2. Double-click the file named **`Start.bat`**.
 
-#### 📦 Step 4 — Install the bits the app needs
+That's it. A black window appears and sets everything up for you (the very first time this takes a minute or two — after that it's quick). Then your 🌐 **web browser** opens automatically showing the app, and it walks you through everything else on screen.
 
-Type this and press Enter:
+> 🛡️ **First time: a blue "Windows protected your PC" box?**
+> Windows is cautious about files from the internet. Click **More info**, then **Run anyway**. You only need to do this once.
+
+➡️ **When you're done**, click the black window and press `Ctrl C` (hold Control, tap C) to stop the app, then close the window. **Next time**, you only need this step 3 — just double-click `Start.bat` again.
+
+> 🆘 **It says Python wasn't found?** Python isn't installed, or the **"Add Python to PATH"** box wasn't ticked during install. Re-run the installer from step 1, tick that box, then double-click `Start.bat` again.
+
+<br>
+
+<details>
+<summary>Prefer to type commands yourself? (optional)</summary>
+
+<br>
+
+If you'd rather not use the double-click launcher, open the project folder in File Explorer, type `cmd` in the address bar and press Enter, then run:
 
 ```
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt   :: once
+python -m streamlit run ui.py               :: each time
 ```
 
-This downloads the building blocks the tool relies on. **You only need to do this once**, and it may take a minute or two. (Lots of text will scroll past — that's normal.)
-
-#### ▶️ Step 5 — Start the app
-
-```
-python -m streamlit run ui.py
-```
-
-Your 🌐 **web browser** should open automatically at `http://localhost:8501`, showing the app. (If it doesn't open on its own, open your browser and type that address into the bar at the top.) From here the app walks you through everything else on screen.
-
-➡️ **When you're done**, go back to Command Prompt and press `Ctrl C` (hold Control, tap C) to stop the app.
-
-> 🆘 **Something not working?**
-> - **"'python' is not recognized…"** → Python was installed without the **"Add Python to PATH"** box ticked. Re-run the installer from step 1 and tick it this time.
-> - **"can't open file… No such file or directory"** → Command Prompt isn't in the project folder. Redo step 3, then try again.
+</details>
 
 </details>
 
@@ -177,7 +162,7 @@ To download your data, the tool needs proof that you're logged into Interactive 
 
 ## 🖥️ Web UI
 
-This is the screen that opens in your browser in step 5 above. To start it again later, repeat step 5 for your computer (open Terminal / Command Prompt in the project folder, then run the start command).
+This is the screen that opens in your browser when you start the app. To open it again another day, just double-click the start file again (`Start.command` on Mac, `Start.bat` on Windows).
 
 ```bash
 streamlit run ui.py
