@@ -1055,6 +1055,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, create_accounts=F
     if not api_url:
         print(colour("No cgt.api_url in config — cannot push.", RED))
         return
+    api_url = api_url.strip().rstrip("/")
     if not api_url.startswith(("http://", "https://")):
         api_url = "https://" + api_url
 

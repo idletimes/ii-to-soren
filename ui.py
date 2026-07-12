@@ -729,7 +729,7 @@ To push your data to Soren, you need an API key. Here's how to get one:
         if col_finish.button(finish_label, type="primary"):
             cfg["ii_request_delay"]["min"] = st.session_state.get("wiz_dmin", 1)
             cfg["ii_request_delay"]["max"] = st.session_state.get("wiz_dmax", 3)
-            cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "https://app.getsoren.app")
+            cfg["cgt"]["api_url"] = st.session_state.get("wiz_cgt_url", "https://app.getsoren.app").strip().rstrip("/")
             api_key = st.session_state.get("wiz_cgt_key", "").strip()
             if api_key:
                 cfg["cgt"]["api_key"] = api_key
@@ -1014,7 +1014,7 @@ def sync_form_to_cfg():
     cfg.setdefault("ii_request_delay", {})["min"] = st.session_state.get("cfg_delay_min", 1)
     cfg["ii_request_delay"]["max"] = st.session_state.get("cfg_delay_max", 3)
     cfg["auto_discover"] = st.session_state.get("cfg_auto_discover", True)
-    cfg.setdefault("cgt", {})["api_url"] = st.session_state.get("cfg_cgt_url", "")
+    cfg.setdefault("cgt", {})["api_url"] = st.session_state.get("cfg_cgt_url", "").strip().rstrip("/")
     _key = st.session_state.get("cfg_cgt_key", "").strip()
     if _key:
         cfg["cgt"]["api_key"] = _key
