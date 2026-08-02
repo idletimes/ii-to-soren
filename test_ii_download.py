@@ -9,14 +9,19 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+import requests
 
+import ii_download
 from ii_download import (
+    CGT_MAX_ATTEMPTS,
     II_ALL_CURRENCIES,
     _account_friendly_name,
     _add_2yr,
     _subtract_2yr,
     build_year_chunks,
     ccy_from_tx_filename,
+    cgt_fetch_account_map,
+    cgt_request,
     cgt_should_skip_transaction,
     cgt_should_skip_valuation,
     decode_jwt_customer_id,
@@ -577,3 +582,132 @@ class TestScanAndUpdateCurrencies:
         account = self._make_account()
         scan_and_update_currencies(account, tmp_path)
         assert account["currencies"][0] == "GBP"
+
+
+# ── Soren API retries ─────────────────────────────────────────────────────────
+
+class FakeResponse:
+    def __init__(self, status_code, headers=None, payload=None):
+        self.status_code = status_code
+        self.headers = headers or {}
+        self._payload = payload
+        self.text = json.dumps(payload) if payload is not None else ""
+
+    def json(self):
+        return self._payload
+
+
+@pytest.fixture
+def cgt_calls(monkeypatch):
+    """Drive cgt_request with a scripted sequence of responses/exceptions.
+
+    Returns a recorder; append outcomes to `.queue` and read `.slept` after.
+    """
+    class Recorder:
+        def __init__(self):
+            self.queue = []
+            self.requests = []
+            self.slept = []
+
+        def _handle(self, method, url, **kwargs):
+            self.requests.append((method, url, kwargs))
+            outcome = self.queue.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    rec = Recorder()
+    monkeypatch.setattr(ii_download.requests, "request", rec._handle)
+    monkeypatch.setattr(ii_download.time, "sleep", rec.slept.append)
+    return rec
+
+
+class TestCgtRequest:
+
+    def test_retries_502_then_succeeds(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(502), FakeResponse(502), FakeResponse(200)]
+        resp = cgt_request("GET", "http://soren/api/accounts", "tok")
+        assert resp.status_code == 200
+        assert len(cgt_calls.requests) == 3
+        assert cgt_calls.slept == [2.0, 4.0]
+
+    def test_gives_up_after_max_attempts_returning_last_response(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(503)] * CGT_MAX_ATTEMPTS
+        resp = cgt_request("GET", "http://soren/api/accounts", "tok")
+        assert resp.status_code == 503
+        assert len(cgt_calls.requests) == CGT_MAX_ATTEMPTS
+        # One fewer sleep than attempts — no wait after the final failure.
+        assert len(cgt_calls.slept) == CGT_MAX_ATTEMPTS - 1
+
+    def test_does_not_retry_client_errors(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(404)]
+        resp = cgt_request("GET", "http://soren/api/accounts", "tok")
+        assert resp.status_code == 404
+        assert len(cgt_calls.requests) == 1
+        assert cgt_calls.slept == []
+
+    def test_does_not_retry_success(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(201)]
+        assert cgt_request("POST", "http://soren/api/accounts", "tok").status_code == 201
+        assert len(cgt_calls.requests) == 1
+
+    def test_retries_connection_error(self, cgt_calls):
+        cgt_calls.queue = [requests.ConnectionError("refused"), FakeResponse(200)]
+        assert cgt_request("GET", "http://soren/api/accounts", "tok").status_code == 200
+        assert len(cgt_calls.requests) == 2
+
+    def test_retries_timeout(self, cgt_calls):
+        cgt_calls.queue = [requests.Timeout("slow"), FakeResponse(200)]
+        assert cgt_request("GET", "http://soren/api/accounts", "tok").status_code == 200
+
+    def test_returns_none_when_never_reachable(self, cgt_calls):
+        cgt_calls.queue = [requests.ConnectionError("refused")] * CGT_MAX_ATTEMPTS
+        assert cgt_request("GET", "http://soren/api/accounts", "tok") is None
+
+    def test_honours_numeric_retry_after(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(429, headers={"Retry-After": "5"}), FakeResponse(200)]
+        cgt_request("GET", "http://soren/api/accounts", "tok")
+        assert cgt_calls.slept == [5.0]
+
+    def test_ignores_unparseable_retry_after(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(503, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}),
+                           FakeResponse(200)]
+        cgt_request("GET", "http://soren/api/accounts", "tok")
+        assert cgt_calls.slept == [2.0]
+
+    def test_backoff_is_capped(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(502)] * 8
+        cgt_request("GET", "http://soren/api/accounts", "tok", attempts=8)
+        assert cgt_calls.slept == [2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]
+
+    def test_sends_bearer_token_and_timeout(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(200)]
+        cgt_request("GET", "http://soren/api/accounts", "tok")
+        _, _, kwargs = cgt_calls.requests[0]
+        assert kwargs["headers"]["Authorization"] == "Bearer tok"
+        assert kwargs["timeout"] == ii_download.CGT_TIMEOUT
+
+    def test_retried_upload_resends_identical_body(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(502), FakeResponse(201)]
+        files = {"upload": ("t.csv", b"a,b\n1,2\n", "text/csv")}
+        cgt_request("POST", "http://soren/api/accounts/1/files", "tok", files=files)
+        first, second = cgt_calls.requests
+        assert first[2]["files"] == second[2]["files"]
+
+
+class TestCgtFetchAccountMap:
+
+    def test_maps_account_number_to_id_after_retry(self, cgt_calls):
+        cgt_calls.queue = [
+            FakeResponse(502),
+            FakeResponse(200, payload=[{"accountNumber": "0970887", "id": 7}]),
+        ]
+        assert cgt_fetch_account_map("http://soren", "tok") == {"0970887": 7}
+
+    def test_returns_none_when_unreachable(self, cgt_calls):
+        cgt_calls.queue = [requests.ConnectionError("refused")] * 6
+        assert cgt_fetch_account_map("http://soren", "tok", attempts=6) is None
+
+    def test_returns_none_on_persistent_502(self, cgt_calls):
+        cgt_calls.queue = [FakeResponse(502)] * 3
+        assert cgt_fetch_account_map("http://soren", "tok", attempts=3) is None

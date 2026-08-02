@@ -870,12 +870,73 @@ def download_corporate_actions(customer_id, account, token, user_dir, config):
 
 # ── Push to Soren ──────────────────────────────────────────────────────
 
-def cgt_fetch_account_map(api_url, cgt_token):
+# Soren answers 502/503 while it is still booting — a local dev server behind a
+# proxy does this until the app binds its port. Retry those shapes rather than
+# losing a push whose download already succeeded.
+CGT_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+CGT_MAX_ATTEMPTS = 4
+# The account-map call is the first thing a push does, so it absorbs the wait
+# for a Soren that is still starting up: 2+4+8+16+30 = 60s before giving up.
+CGT_BOOT_ATTEMPTS = 6
+CGT_BACKOFF_BASE = 2.0
+CGT_MAX_BACKOFF = 30.0
+CGT_TIMEOUT = (10, 120)  # (connect, read) seconds
+
+
+def _cgt_retry_delay(resp, attempt):
+    """Seconds to wait before retrying; exponential from `attempt` (1-indexed).
+
+    A numeric Retry-After header wins when the server sends one.
+    """
+    if resp is not None:
+        try:
+            return max(0.0, min(float(resp.headers.get("Retry-After", "")), CGT_MAX_BACKOFF))
+        except (TypeError, ValueError):
+            pass
+    return min(CGT_BACKOFF_BASE ** attempt, CGT_MAX_BACKOFF)
+
+
+def cgt_request(method, url, cgt_token, attempts=CGT_MAX_ATTEMPTS, **kwargs):
+    """Call the Soren API, retrying transient failures with exponential backoff.
+
+    Retries connection errors, timeouts and 429/5xx; everything else returns
+    straight away. Returns the final Response, or None if no attempt reached the
+    server. Any `files=` payload must be bytes rather than an open handle —
+    a retry re-sends the same body.
+    """
+    headers = {"Authorization": f"Bearer {cgt_token}"}
+    headers.update(kwargs.pop("headers", None) or {})
+    kwargs.setdefault("timeout", CGT_TIMEOUT)
+
+    resp = None
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.request(method, url, headers=headers, **kwargs)
+            if resp.status_code not in CGT_RETRY_STATUSES:
+                return resp
+            reason = f"HTTP {resp.status_code}"
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            resp = None
+            reason = type(exc).__name__
+
+        if attempt == attempts:
+            break
+        delay = _cgt_retry_delay(resp, attempt)
+        print(colour(
+            f"[Soren {reason} — retrying in {delay:.0f}s, attempt {attempt + 1}/{attempts}] ",
+            YELLOW,
+        ), end="", flush=True)
+        time.sleep(delay)
+
+    return resp
+
+
+def cgt_fetch_account_map(api_url, cgt_token, attempts=CGT_BOOT_ATTEMPTS):
     """Fetch Soren accounts and build accountNumber → cgt_id mapping."""
-    resp = requests.get(
-        f"{api_url}/api/accounts",
-        headers={"Authorization": f"Bearer {cgt_token}"},
-    )
+    resp = cgt_request("GET", f"{api_url}/api/accounts", cgt_token, attempts=attempts)
+    if resp is None:
+        print(colour(f"  CGT API unreachable listing accounts — is Soren running at {api_url}?", RED))
+        return None
     if resp.status_code != 200:
         print(colour(f"  CGT API error listing accounts: HTTP {resp.status_code}", RED))
         print(colour(f"    {resp.text[:500]}", RED))
@@ -921,11 +982,13 @@ def _infer_account_type(name):
 def cgt_create_account(api_url, cgt_token, account_number, name):
     """Create a new account in Soren and return its id, or None on failure."""
     account_type = _infer_account_type(name)
-    resp = requests.post(
-        f"{api_url}/api/accounts",
-        headers={"Authorization": f"Bearer {cgt_token}"},
+    resp = cgt_request(
+        "POST", f"{api_url}/api/accounts", cgt_token,
         json={"name": name, "account_type": account_type, "account_number": account_number},
     )
+    if resp is None:
+        print(colour(f"    CGT API unreachable creating account '{name}'", RED))
+        return None
     if resp.status_code == 201:
         return resp.json()["id"]
     if resp.status_code == 409:
@@ -938,11 +1001,15 @@ def cgt_create_account(api_url, cgt_token, account_number, name):
 
 def cgt_fetch_uploaded_files(api_url, cgt_token, cgt_account_id, debug=False):
     """Fetch list of already-uploaded files for a Soren account."""
-    resp = requests.get(
-        f"{api_url}/api/accounts/{cgt_account_id}/files",
-        headers={"Authorization": f"Bearer {cgt_token}"},
-    )
-    if resp.status_code != 200:
+    resp = cgt_request("GET", f"{api_url}/api/accounts/{cgt_account_id}/files", cgt_token)
+    if resp is None or resp.status_code != 200:
+        # Falling back to "nothing uploaded" makes us re-push files Soren may
+        # already hold, so say so rather than failing silently.
+        status = "unreachable" if resp is None else f"HTTP {resp.status_code}"
+        print(colour(
+            f"    could not list existing files for account {cgt_account_id} ({status}) "
+            "— treating as empty, duplicates possible", YELLOW,
+        ))
         return {"transactions": [], "valuations": []}
     data = resp.json()
     if debug:
@@ -972,11 +1039,8 @@ def ccy_from_tx_filename(filename):
 
 def cgt_fetch_corporate_action_drafts(api_url, cgt_token):
     """Return the list of pending corporate-action drafts for this user."""
-    resp = requests.get(
-        f"{api_url}/api/corporate-action-drafts",
-        headers={"Authorization": f"Bearer {cgt_token}"},
-    )
-    if resp.status_code == 200:
+    resp = cgt_request("GET", f"{api_url}/api/corporate-action-drafts", cgt_token)
+    if resp is not None and resp.status_code == 200:
         return resp.json()
     return []
 
@@ -989,13 +1053,14 @@ def cgt_upload_corporate_action_pdf(api_url, cgt_token, file_path):
         'duplicate' – 409 (exact bytes already present; treat as success)
         'error'     – anything else
     """
-    with open(file_path, "rb") as f:
-        resp = requests.post(
-            f"{api_url}/api/corporate-action-drafts",
-            headers={"Authorization": f"Bearer {cgt_token}"},
-            files={"file": (file_path.name, f, "application/pdf")},
-            data={"source": "api"},
-        )
+    resp = cgt_request(
+        "POST", f"{api_url}/api/corporate-action-drafts", cgt_token,
+        files={"file": (file_path.name, file_path.read_bytes(), "application/pdf")},
+        data={"source": "api"},
+    )
+    if resp is None:
+        print(colour("unreachable", RED))
+        return "error"
     if resp.status_code == 201:
         return "uploaded"
     if resp.status_code == 409:
@@ -1007,11 +1072,10 @@ def cgt_upload_corporate_action_pdf(api_url, cgt_token, file_path):
 
 def cgt_delete_file(api_url, cgt_token, cgt_account_id, file_id):
     """Delete a file from the Soren API by its ID."""
-    resp = requests.delete(
-        f"{api_url}/api/accounts/{cgt_account_id}/files/{file_id}",
-        headers={"Authorization": f"Bearer {cgt_token}"},
+    resp = cgt_request(
+        "DELETE", f"{api_url}/api/accounts/{cgt_account_id}/files/{file_id}", cgt_token,
     )
-    return resp.status_code in (200, 204)
+    return resp is not None and resp.status_code in (200, 204)
 
 
 def cgt_should_skip_valuation(valuation_date_str, uploaded_valuations):
@@ -1033,13 +1097,15 @@ def cgt_upload_file(api_url, cgt_token, cgt_account_id, file_path, file_type, va
         data["valuation_date"] = valuation_date
 
     content = file_path.read_bytes().replace(b'\xef\xbb\xbf', b'')
-    resp = requests.post(
-        f"{api_url}/api/accounts/{cgt_account_id}/files",
-        headers={"Authorization": f"Bearer {cgt_token}"},
+    resp = cgt_request(
+        "POST", f"{api_url}/api/accounts/{cgt_account_id}/files", cgt_token,
         data=data,
         files={"upload": (file_path.name, content, "text/csv")},
     )
 
+    if resp is None:
+        print(colour("unreachable", RED))
+        return False
     if resp.status_code in (200, 201):
         return True
     else:
@@ -1071,6 +1137,7 @@ def push_to_cgt(config, account_filter=None, user_emails=None, create_accounts=F
     print(colour(BOLD + "Fetching Soren account mapping..." + RESET, BOLD))
     account_map = cgt_fetch_account_map(api_url, cgt_token)
     if account_map is None:
+        print(colour("  Download data is on disk — re-run with --push-only once Soren is up.", YELLOW))
         sys.exit(1)
 
     summary = []

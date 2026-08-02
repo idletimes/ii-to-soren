@@ -1,0 +1,6 @@
+# Development / test dependencies.
+# Running the app only needs requirements.txt — that is what the double-click
+# launchers install, so keep test-only packages out of it.
+-r requirements.txt
+
+pytest>=8.0

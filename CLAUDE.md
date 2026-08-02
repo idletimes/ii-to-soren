@@ -19,6 +19,7 @@ CGT-reporting app). Two front-ends over the same logic:
 
 ```bash
 pip install -r requirements.txt          # requests, pyyaml, streamlit
+pip install -r requirements-dev.txt      # the above + pytest (tests only)
 
 streamlit run ui.py                       # UI
 python ii_download.py                     # CLI, all users in config.yaml
@@ -112,6 +113,11 @@ scanning GBP statement history for FX-conversion rows (see `_GBP_CCY_PATTERNS` a
 
 - Be conservative with the ii API: it's private/undocumented and rate-limited. Keep the
   `ii_throttle()` random delay between calls; don't hammer endpoints in loops.
+- Every Soren call goes through `cgt_request()` — never `requests.*` directly for CGT
+  endpoints. It retries connection errors/timeouts/429/5xx with backoff (Soren returns
+  502 while still booting locally) and returns `None` when the server was never reached,
+  so callers must handle `None` as well as a bad status. Any `files=` payload must be
+  bytes, not an open handle, or a retry re-sends an exhausted stream.
 - Never commit real tokens, `config.yaml`, or downloaded account data. `downloads/` and
   `config.yaml` are gitignored.
 - When exploring a new endpoint, save raw responses to the scratchpad, not the repo.

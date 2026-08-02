@@ -148,6 +148,9 @@ def extract_errors(log):
             inline.append(line)
         elif line.startswith("Discovery failed") or "discovery failed for" in line:
             inline.append(line)
+        elif line.startswith("CGT API error") or line.startswith("CGT API unreachable"):
+            # Fatal before any summary block is reached — the push aborts here.
+            inline.append(line)
         elif line.startswith("Traceback (most recent call last)"):
             inline.append("Unhandled error — see traceback in logs")
     result = fails if fails else inline

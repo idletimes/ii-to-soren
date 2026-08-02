@@ -375,10 +375,14 @@ All requests are authenticated with a short-lived Bearer JWT (~28 min) obtained 
 ## Running tests
 
 ```bash
+python -m pip install -r requirements-dev.txt
+```
+
+```bash
 pytest test_ii_download.py -v
 ```
 
-The test suite covers all pure-logic functions (JWT decoding, date chunking, filename parsing, deduplication logic, year-boundary edge cases). Network calls are not tested.
+The test suite covers all pure-logic functions (JWT decoding, date chunking, filename parsing, deduplication logic, year-boundary edge cases) plus the Soren API retry/backoff behaviour against a stubbed `requests`. No real network calls are made.
 
 ## Security
 
