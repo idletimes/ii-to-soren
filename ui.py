@@ -377,7 +377,7 @@ BM_JS = (
 
 def render_bookmarklet_button():
     """Render the draggable bookmarklet button."""
-    st.components.v1.html(
+    st.iframe(
         f"""
         <div style="margin:16px 0 8px;">
           <a href="{BM_JS}"
@@ -404,12 +404,13 @@ config = load_config()
 
 # Disable browser autofill on all text inputs (Streamlit exposes no autocomplete param).
 # The MutationObserver re-applies it after every Streamlit rerun that swaps DOM nodes.
-st.components.v1.html("""
+# st.html isn't iframed, so this runs against the app document directly and takes no space.
+st.html("""
 <script>
 (function () {
     function patch() {
         try {
-            window.parent.document.querySelectorAll('input').forEach(function (el) {
+            document.querySelectorAll('input').forEach(function (el) {
                 el.setAttribute('autocomplete', 'off');
             });
         } catch (e) {}
@@ -417,11 +418,11 @@ st.components.v1.html("""
     patch();
     var obs = new MutationObserver(patch);
     try {
-        obs.observe(window.parent.document.body, { childList: true, subtree: true });
+        obs.observe(document.body, { childList: true, subtree: true });
     } catch (e) {}
 })();
 </script>
-""", height=0)
+""", unsafe_allow_javascript=True)
 
 
 def show_onboarding():
