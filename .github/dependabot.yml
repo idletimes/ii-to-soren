@@ -1,0 +1,33 @@
+version: 2
+
+updates:
+  # Python dependencies. The pip ecosystem at "/" picks up every
+  # *requirements*.txt in the directory, so this covers both
+  # requirements.txt and requirements-dev.txt.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # One PR a week for the low-risk bumps; majors stay separate so
+      # they can be reviewed (and reverted) on their own.
+      python-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Keep the actions used by the CI workflow current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    # No group here: the workflow pins floating major tags (@v7), so patch and
+    # minor releases never move the ref. The only PR this can raise is a major
+    # bump, which is worth reviewing on its own anyway.

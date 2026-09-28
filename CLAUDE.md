@@ -35,6 +35,10 @@ python -m pytest test_ii_download.py      # tests
 
 `Start.command` (macOS) / `Start.bat` (Windows) are double-click launchers for the UI.
 
+CI (`.github/workflows/ci.yml`) runs `pytest test_ii_download.py` on push to `main` and on
+PRs, over Python 3.11–3.14. Dependabot (`.github/dependabot.yml`) opens weekly pip and
+github-actions update PRs, with minor/patch bumps grouped.
+
 ## Auth
 
 - ii auth is a short-lived **Bearer JWT** the user pastes in (obtained from a logged-in

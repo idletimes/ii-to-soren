@@ -14,6 +14,9 @@ build/
 .venv/
 venv/
 
+# Local dev environment (direnv)
+.envrc
+
 # IDE
 .vscode/
 .idea/

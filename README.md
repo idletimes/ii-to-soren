@@ -40,7 +40,7 @@ There are just **three things to do**: install Python, download this project, th
 
 Python is the engine this tool runs on. To install it: go to [python.org/downloads](https://www.python.org/downloads/), click the big yellow **Download Python** button, open the file that downloads, and click through the installer (the default options are fine).
 
-> Already have Python 3.10 or newer? You can skip this — but if you're not sure, just install it anyway. Installing again does no harm.
+> Already have Python 3.11 or newer? You can skip this — but if you're not sure, just install it anyway. Installing again does no harm.
 
 #### 📥 Step 2 — Download this project
 
@@ -98,7 +98,7 @@ Python is the engine this tool runs on.
 2. Open the file that downloads to start the installer.
 3. ⚠️ **This is the important bit:** on the very first installer screen, tick the checkbox at the bottom that says **"Add Python to PATH"** *before* you click **Install Now**. If you miss it, the start file won't be able to find Python.
 
-> Already have Python 3.10 or newer? You can skip this — but if you're not sure, install it anyway (and still tick "Add Python to PATH"). Installing again does no harm.
+> Already have Python 3.11 or newer? You can skip this — but if you're not sure, install it anyway (and still tick "Add Python to PATH"). Installing again does no harm.
 
 #### 📥 Step 2 — Download this project
 
@@ -381,6 +381,8 @@ python -m pip install -r requirements-dev.txt
 ```bash
 pytest test_ii_download.py -v
 ```
+
+GitHub Actions runs this same suite on every push to `main` and every pull request, across Python 3.11–3.14. Dependabot also opens weekly pull requests for Python and GitHub Actions dependency updates (Python minor and patch bumps are grouped into one PR; major bumps come separately).
 
 The test suite covers all pure-logic functions (JWT decoding, date chunking, filename parsing, deduplication logic, year-boundary edge cases) plus the Soren API retry/backoff behaviour against a stubbed `requests`. No real network calls are made.
 
