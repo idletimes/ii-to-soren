@@ -15,11 +15,11 @@ VENV_DIR=".venv"
 echo "Starting ii-to-soren…"
 echo
 
-# 1. Find a usable Python (3.10+).
+# 1. Find a usable Python (3.11+).
 PYTHON=""
 for candidate in python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
       PYTHON="$candidate"
       break
     fi
@@ -27,7 +27,7 @@ for candidate in python3 python; do
 done
 
 if [ -z "$PYTHON" ]; then
-  echo "❌ Python 3.10 or later was not found."
+  echo "❌ Python 3.11 or later was not found."
   echo
   echo "Please install it from https://www.python.org/downloads/ and then"
   echo "double-click this file again."

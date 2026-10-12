@@ -14,18 +14,18 @@ set "VENV_DIR=.venv"
 echo Starting ii-to-soren...
 echo.
 
-rem 1. Find a usable Python (3.10+). The "py" launcher is preferred on Windows.
+rem 1. Find a usable Python (3.11+). The "py" launcher is preferred on Windows.
 set "PYTHON="
-py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if %errorlevel% equ 0 (
   set "PYTHON=py -3"
 ) else (
-  python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+  python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
   if %errorlevel% equ 0 set "PYTHON=python"
 )
 
 if not defined PYTHON (
-  echo [X] Python 3.10 or later was not found.
+  echo [X] Python 3.11 or later was not found.
   echo.
   echo Please install it from https://www.python.org/downloads/
   echo During install, tick "Add Python to PATH", then double-click this file again.
