@@ -6,8 +6,8 @@
 linear_team: HAR
 default_branch: main
 
-# The project venv is on PATH inside the container, so `python` is the venv's.
-test: ["python -m pytest -q test_ii_download.py"]
+# The project venv is on PATH inside the container, so `python3` is the venv's (doctor checks the name exists on the Mac too, which has no bare `python`).
+test: ["python3 -m pytest -q test_ii_download.py"]
 
 # Plain pip project (no lockfile): install requirements-dev.txt into the engine's per-project venv
 # volume, on the CPython 3.12 baked into .claude/build-board/Dockerfile.
