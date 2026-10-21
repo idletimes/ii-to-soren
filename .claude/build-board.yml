@@ -1,0 +1,27 @@
+# build-board settings for ii-to-soren. Every key is documented in ~/Code/build-board/docs/CONFIG.md
+# (and templates/build-board.yml there).
+#
+# Builds run in a fresh clone, so the gitignored config.yaml and downloads/ are never in a build,
+# and no build has an ii token: nothing here can reach the ii API. The tests need neither.
+linear_team: HAR
+default_branch: main
+
+# The project venv is on PATH inside the container, so `python` is the venv's.
+test: ["python -m pytest -q test_ii_download.py"]
+
+# Plain pip project (no lockfile): install requirements-dev.txt into the engine's per-project venv
+# volume, on the CPython 3.12 baked into .claude/build-board/Dockerfile.
+before_build: >-
+  V="${UV_PROJECT_ENVIRONMENT:-/home/node/project-venv}";
+  [ -x "$V/bin/python" ] || uv venv -q --python 3.12 "$V";
+  uv pip install -q --python "$V/bin/python" -r requirements-dev.txt
+
+caps: { building: 1 }
+
+merge: { gate: auto, method: squash }
+
+# No deploy: ii-to-soren runs on the user's machine. A merged ticket goes straight to Done.
+
+questions:
+  timeout_hours: 24
+  auto_proceed: true
