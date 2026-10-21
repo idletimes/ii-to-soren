@@ -59,11 +59,12 @@ comment block lives at the top of `ii_download.py` (~line 24). Summary:
 | Account list (discovery) | `GET /1/customers/{cid}/accounts` |
 | Portfolio snapshot CSV | `GET /2/customers/{cid}/accounts/{aid}/portfolio/export` |
 | Cash balance (aggregate) | `GET /2/customers/{cid}/accounts/{aid}/portfolio` → `total.totalCashValue` |
+| Cash balances (per currency) | `GET /1/customers/{cid}/accounts/{aid}/cash-balances` on `/order/api` — see below |
 | Transaction statements | `GET /1/customers/{cid}/accounts/{aid}/statements/{ccy}?fromDate=&toDate=` (max 24 months) |
 | Corporate action summaries | `GET /1/customers/{cid}/accounts/{aid}/document-CORPORATE_ACTION_NOTIFICATIONS-summaries` (pagination 1-indexed) |
 | Corporate action PDF | `GET /1/customers/{cid}/accounts/{aid}/documents/{did}` (accept: application/pdf) |
 
-### Per-currency cash balances (not yet wired into the code)
+### Per-currency cash balances (saved locally, not uploaded)
 
 There is a richer cash endpoint on a **different base path** (`/order/api`, not
 `/enrolled/api`):
@@ -99,10 +100,19 @@ Findings from live probing:
   thing we want) don't depend on it, and everything downstream is GBP. Not worth a
   user-facing reporting-currency setting.
 
-The current `download_cash()` still uses the aggregate `/portfolio` endpoint and writes
-a single `Cash_GBP` value. Migrating it to `cash-balances` (one row per currency) is a
-**pending** task — do not assume it's done. The CSV format for that is intentionally not
-yet decided.
+What the code does today:
+- `download_cash()` still writes `cash_YYYY-MM-DD.csv` (single `Cash_GBP` value) from the
+  aggregate `/portfolio` endpoint, and that is still the only cash file pushed to Soren.
+- After that, `download_cash_balances()` calls `cash-balances` (`ORDER_BASE_URL`) and saves
+  the body **unchanged** as `cash_balances_YYYY-MM-DD.json` in the same account folder.
+  ii only reports today's balances, so these daily snapshots are kept for later checking
+  against Soren's own per-currency cash. Same-day re-runs overwrite it.
+- It is best-effort: any failure (HTTP error incl. 401/403, network, non-JSON, no
+  `results[]`) is a yellow warning; the CSV and `download_cash()`'s return value are
+  unaffected, and a bad response never overwrites an earlier good snapshot.
+- The JSON is **saved locally, not uploaded** — the push step only matches
+  `^cash_(\d{4}-\d{2}-\d{2})\.csv$`. The format Soren will ingest is deliberately undecided
+  (tradeCGT `docs/multi-currency-cash-ingestion-plan.md`); don't invent a CSV for it.
 
 ## Config
 

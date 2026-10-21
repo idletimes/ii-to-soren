@@ -28,6 +28,7 @@ from ii_download import (
     decode_jwt_payload,
     detect_currencies_from_gbp_csv,
     detect_currencies_from_gbp_rows,
+    download_cash,
     find_transaction_files,
     is_current_year_partial,
     scan_and_update_currencies,
@@ -711,3 +712,151 @@ class TestCgtFetchAccountMap:
     def test_returns_none_on_persistent_502(self, cgt_calls):
         cgt_calls.queue = [FakeResponse(502)] * 3
         assert cgt_fetch_account_map("http://soren", "tok", attempts=3) is None
+
+
+# ── Cash downloads (mocked ii HTTP) ───────────────────────────────────────────
+
+# Pretty-printed, trailing zeros, raw "£" and a trailing newline: any parse-and-rewrite
+# would change these bytes, so the test proves the body is saved untouched.
+CASH_BALANCES_BODY = """{
+  "preferredCurrency" : { "code" : "GBP", "prefix" : "£" },
+  "totalInPreferredCurrency" : 915.30,
+  "results" : [
+    { "currency" : { "code" : "GBP" }, "current" : 476.10, "pending" : 0.00,
+      "total" : 476.10, "totalInPreferredCurrency" : 476.10, "availableToFx" : 476.10 },
+    { "currency" : { "code" : "USD" }, "current" : 550.0, "pending" : 0.0,
+      "total" : 550.0, "totalInPreferredCurrency" : 439.20, "availableToFx" : 550.0 }
+  ]
+}
+""".encode("utf-8")
+
+
+class IIResponse:
+    def __init__(self, status_code, body=b""):
+        self.status_code = status_code
+        self.content = body
+        self.text = body.decode("utf-8", "replace")
+
+    def json(self):
+        return json.loads(self.content)
+
+
+class FixedDate(date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 10, 21)
+
+
+@pytest.fixture
+def ii_get(monkeypatch):
+    """Route ii GETs by URL: `.portfolio` and `.cash_balances` are a response or an exception."""
+    class Router:
+        def __init__(self):
+            self.portfolio = IIResponse(200, json.dumps(
+                {"total": {"totalCashValue": 915.31, "currency": {"code": "GBP"}}}).encode())
+            self.cash_balances = IIResponse(200, CASH_BALANCES_BODY)
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            outcome = self.cash_balances if url.endswith("/cash-balances") else self.portfolio
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    router = Router()
+    monkeypatch.setattr(ii_download, "date", FixedDate)
+    monkeypatch.setattr(ii_download.requests, "get", router.get)
+    monkeypatch.setattr(ii_download.time, "sleep", lambda s: None)
+    return router
+
+
+class TestDownloadCash:
+    ACCOUNT = {"id": "0970887", "name": "Trading"}
+    CONFIG = {"ii_request_delay": {"min": 0, "max": 0}}
+
+    def _run(self, tmp_path):
+        return download_cash("C1", self.ACCOUNT, "tok", tmp_path, self.CONFIG)
+
+    def _files(self, tmp_path):
+        acct = tmp_path / "0970887"
+        return acct / "cash_2026-10-21.csv", acct / "cash_balances_2026-10-21.json"
+
+    def test_saves_per_currency_response_unchanged(self, tmp_path, ii_get):
+        assert self._run(tmp_path) == "downloaded"
+        csv_file, json_file = self._files(tmp_path)
+        assert json_file.read_bytes() == CASH_BALANCES_BODY
+        assert csv_file.read_text() == "Cash_GBP\n915.31\n"
+        url, kwargs = ii_get.calls[-1]
+        assert url == ("https://api-prod.ii.co.uk/order/api/1/customers/C1"
+                       "/accounts/0970887/cash-balances")
+        assert kwargs["params"] == {"preferredCurrency": "GBP", "settlementCurrency": "GBP"}
+        assert kwargs["headers"]["authorization"] == "Bearer tok"
+        assert sorted(p.name for p in json_file.parent.iterdir()) == [csv_file.name, json_file.name]
+
+    def test_rerun_same_day_overwrites_json(self, tmp_path, ii_get):
+        _, json_file = self._files(tmp_path)
+        json_file.parent.mkdir(parents=True)
+        json_file.write_bytes(b'{"results": []}')
+        self._run(tmp_path)
+        assert json_file.read_bytes() == CASH_BALANCES_BODY
+
+    @pytest.mark.parametrize("outcome", [
+        IIResponse(500, b"Internal Server Error"),
+        requests.ConnectionError("refused"),
+        requests.Timeout("slow"),
+        IIResponse(200, b"<html>maintenance</html>"),
+        IIResponse(200, b'{"unexpected": true}'),
+    ], ids=["500", "connection-error", "timeout", "not-json", "no-results"])
+    def test_failure_still_writes_csv(self, tmp_path, ii_get, capsys, outcome):
+        ii_get.cash_balances = outcome
+        assert self._run(tmp_path) == "downloaded"
+        csv_file, json_file = self._files(tmp_path)
+        assert csv_file.read_text() == "Cash_GBP\n915.31\n"
+        assert not json_file.exists()
+        assert "skipped" in capsys.readouterr().out
+
+    def test_failure_keeps_earlier_same_day_json(self, tmp_path, ii_get):
+        _, json_file = self._files(tmp_path)
+        json_file.parent.mkdir(parents=True)
+        json_file.write_bytes(CASH_BALANCES_BODY)
+        ii_get.cash_balances = IIResponse(200, b"<html>maintenance</html>")
+        self._run(tmp_path)
+        assert json_file.read_bytes() == CASH_BALANCES_BODY
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_auth_failure_reported_but_not_fatal(self, tmp_path, ii_get, capsys, status):
+        ii_get.cash_balances = IIResponse(status, b"")
+        assert self._run(tmp_path) == "downloaded"
+        csv_file, json_file = self._files(tmp_path)
+        assert csv_file.exists() and not json_file.exists()
+        assert f"HTTP {status}" in capsys.readouterr().out
+
+    def test_portfolio_failure_unchanged(self, tmp_path, ii_get):
+        ii_get.portfolio = IIResponse(401, b"")
+        assert self._run(tmp_path) == "error"
+        assert not any((tmp_path / "0970887").iterdir())
+
+
+class TestPushIgnoresCashBalancesJson:
+
+    def test_only_cash_csv_is_uploaded(self, tmp_path, monkeypatch):
+        acct = tmp_path / "alice@example.com" / "0970887"
+        acct.mkdir(parents=True)
+        (acct / "cash_2026-10-21.csv").write_text("Cash_GBP\n915.31\n")
+        (acct / "cash_balances_2026-10-21.json").write_bytes(CASH_BALANCES_BODY)
+        # A .csv the glob does match, so the ^cash_<date>.csv$ guard is exercised too.
+        (acct / "cash_balances_2026-10-21.csv").write_text("not a cash file\n")
+
+        uploads = []
+        monkeypatch.setattr(ii_download, "DOWNLOADS_DIR", tmp_path)
+        monkeypatch.setattr(ii_download, "cgt_fetch_account_map", lambda *a, **k: {"0970887": 7})
+        monkeypatch.setattr(ii_download, "cgt_fetch_corporate_action_drafts", lambda *a, **k: [])
+        monkeypatch.setattr(ii_download, "cgt_fetch_uploaded_files", lambda *a, **k: {})
+        monkeypatch.setattr(ii_download, "cgt_upload_file",
+                            lambda api, tok, cid, path, ftype, val_date=None:
+                            uploads.append((path.name, ftype, val_date)) or True)
+
+        ii_download.push_to_cgt({"cgt": {"api_url": "http://soren", "api_key": "k"}})
+
+        assert uploads == [("cash_2026-10-21.csv", "valuations", "2026-10-21")]

@@ -23,7 +23,8 @@ You'll touch a few apps during setup. Here's what each one is and where it comes
 | Data | Format | Notes |
 |------|--------|-------|
 | Portfolio snapshots | CSV | Current holdings, one file per run |
-| Cash balances | CSV | Cash position per account |
+| Cash balances | CSV | Cash position per account (this is what's pushed to Soren) |
+| Per-currency cash balances | JSON | Raw II response, one entry per currency held; kept locally, not pushed |
 | Transaction statements | CSV | Chunked by calendar year, per currency |
 | Corporate action notifications | PDF | Downloaded from your II document history |
 
@@ -301,6 +302,7 @@ downloads/
     1234567/                              ← account ID
       portfolio_2026-04-22.csv           ← today's holdings snapshot
       cash_2026-04-22.csv                ← today's cash balance
+      cash_balances_2026-04-22.json      ← today's per-currency cash, raw from II (kept locally, not pushed)
       transactions_GBP_2024.csv          ← full calendar year (locked, never re-downloaded)
       transactions_GBP_2025.csv
       transactions_GBP_2026-01-01_2026-04-22.csv   ← current-year partial (refreshed each run)
@@ -322,7 +324,7 @@ downloads/
 | Full calendar-year transaction files (e.g. `transactions_GBP_2024.csv`) | Never — locked once complete |
 | Historic mid-year-start partials (e.g. `transactions_GBP_2022-06-01_2022-12-31.csv`) | Never |
 | Current-year partial (e.g. `transactions_GBP_2026-01-01_2026-04-22.csv`) | Always — replaced with a fresh download up to today |
-| Portfolio / cash snapshots | Always — fresh snapshot each run |
+| Portfolio / cash snapshots (incl. `cash_balances_*.json`) | Always — fresh snapshot each run (overwrites same day) |
 | Corporate action PDFs | Skipped if already downloaded (by filename) |
 
 The current-year partial file is always replaced so that transactions made since the last run are captured. This is safe across the year-end boundary: a Dec 31 partial is replaced on Jan 1 as well.
@@ -358,12 +360,13 @@ A long-lived API key from **Settings → API** in Soren is recommended so you do
 
 ## Interactive Investor API endpoints
 
-All requests are authenticated with a short-lived Bearer JWT (~28 min) obtained via the browser. The base URL is `https://api-prod.ii.co.uk/enrolled/api`.
+All requests are authenticated with a short-lived Bearer JWT (~28 min) obtained via the browser. The base URL is `https://api-prod.ii.co.uk/enrolled/api`, except endpoint 2b, which is on `https://api-prod.ii.co.uk/order/api`.
 
 | # | Method | Path | Returns |
 |---|--------|------|---------|
 | 1 | GET | `/2/customers/{cid}/accounts/{aid}/portfolio/export` | Portfolio snapshot CSV |
 | 2 | GET | `/2/customers/{cid}/accounts/{aid}/portfolio` | Cash balance (JSON) |
+| 2b | GET | `/1/customers/{cid}/accounts/{aid}/cash-balances?preferredCurrency=GBP&settlementCurrency=GBP` (on `/order/api`) | Per-currency cash balances (JSON) |
 | 3 | GET | `/1/customers/{cid}/accounts/{aid}/statements/{ccy}?fromDate=…&toDate=…&sortBy=TRANSACTION_DATE&sortOrder=DESCENDING` | Transaction statement CSV |
 | 4 | GET | `/1/customers/{cid}/accounts/{aid}/document-CORPORATE_ACTION_NOTIFICATIONS-summaries?pageNumber={n}&pageSize=50&sortField=PUBLISHED_DATE&sortType=DESCENDING` | Corporate action list (JSON, 1-indexed pagination) |
 | 5 | GET | `/1/customers/{cid}/accounts/{aid}/documents/{did}` | Corporate action PDF (requires `accept: application/pdf`) |

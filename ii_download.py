@@ -18,6 +18,7 @@ import requests
 import yaml
 
 BASE_URL = "https://api-prod.ii.co.uk/enrolled/api"
+ORDER_BASE_URL = "https://api-prod.ii.co.uk/order/api"
 DOWNLOADS_DIR = Path("downloads")
 CONFIG_FILE = Path("config.yaml")
 
@@ -48,6 +49,12 @@ CONFIG_FILE = Path("config.yaml")
 # 2. Cash balance (JSON)
 #    GET /2/customers/{cid}/accounts/{aid}/portfolio
 #    → JSON; cash extracted from response["total"]["totalCashValue"] / ["currency"]
+#
+# 2b. Per-currency cash balances (JSON) — note the /order/api base, not /enrolled/api
+#    GET {ORDER_BASE_URL}/1/customers/{cid}/accounts/{aid}/cash-balances
+#        ?preferredCurrency=GBP&settlementCurrency=GBP
+#    → JSON; results[] has one entry per native currency held (current, pending, total, …)
+#    → Saved raw as cash_balances_YYYY-MM-DD.json; not uploaded to Soren
 #
 # 3. Transaction statement (CSV or JSON)
 #    GET /1/customers/{cid}/accounts/{aid}/statements/{ccy}
@@ -659,7 +666,63 @@ def download_cash(customer_id, account, token, user_dir, config):
 
     out_file.write_text(f"Cash_{currency}\n{cash_value}\n", encoding="utf-8")
     print(colour(f"saved → {out_file}  ({currency} {cash_value})", GREEN))
+
+    try:
+        download_cash_balances(customer_id, account_id, token, out_dir, today, config)
+    except Exception as e:  # never let the snapshot break the cash download
+        print(colour(f"skipped — unexpected error ({e.__class__.__name__}: {e})", YELLOW))
     return "downloaded"
+
+
+def download_cash_balances(customer_id, account_id, token, out_dir, today, config):
+    """Save ii's per-currency cash balances raw as cash_balances_YYYY-MM-DD.json.
+
+    ii only reports today's figures, so we keep a daily snapshot for later checking
+    against Soren's own per-currency cash. Best-effort: any failure is a yellow
+    warning and never affects the cash CSV. Not uploaded to Soren.
+    """
+    out_file = out_dir / f"cash_balances_{today}.json"
+    url = f"{ORDER_BASE_URL}/1/customers/{customer_id}/accounts/{account_id}/cash-balances"
+    params = {"preferredCurrency": "GBP", "settlementCurrency": "GBP"}
+    print("    Per-currency cash balances...", end=" ")
+
+    def warn(msg):
+        print(colour(f"skipped — {msg}", YELLOW))
+
+    ii_throttle(config)
+    headers = {**make_headers(token), "accept": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+    except requests.RequestException as e:
+        warn(f"request failed ({e.__class__.__name__})")
+        return False
+    if resp.status_code in (401, 403):
+        warn(f"HTTP {resp.status_code} (auth failed — token expired or not authorised)")
+        return False
+    if resp.status_code != 200:
+        warn(f"HTTP {resp.status_code}")
+        return False
+
+    # Check the shape before saving so an error page never overwrites a good snapshot.
+    try:
+        data = json.loads(resp.content)
+    except ValueError:
+        warn("response was not JSON")
+        return False
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        warn("unexpected response shape (no results[])")
+        return False
+
+    tmp_file = out_file.with_name(out_file.name + ".tmp")
+    try:
+        tmp_file.write_bytes(resp.content)
+        tmp_file.replace(out_file)
+    except OSError as e:
+        tmp_file.unlink(missing_ok=True)
+        warn(f"could not write {out_file} ({e})")
+        return False
+    print(colour(f"saved → {out_file}  ({len(data['results'])} currencies)", GREEN))
+    return True
 
 
 def build_year_chunks(from_date, to_date):
