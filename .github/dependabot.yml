@@ -11,6 +11,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    # Wait a week after a release before proposing it: a hijacked release is
+    # usually spotted and pulled within days. Security fixes are not delayed.
+    cooldown:
+      default-days: 7
     groups:
       # One PR a week for the low-risk bumps; majors stay separate so
       # they can be reviewed (and reverted) on their own.
@@ -28,6 +32,9 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
+    # Same one-week wait as for pip above.
+    cooldown:
+      default-days: 7
     # No group here: the workflow pins floating major tags (@v7), so patch and
     # minor releases never move the ref. The only PR this can raise is a major
     # bump, which is worth reviewing on its own anyway.

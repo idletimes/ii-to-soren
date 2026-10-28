@@ -385,7 +385,7 @@ python -m pip install -r requirements-dev.txt
 pytest test_ii_download.py -v
 ```
 
-GitHub Actions runs this same suite on every push to `main` and every pull request, across Python 3.11–3.14. Dependabot also opens weekly pull requests for Python and GitHub Actions dependency updates (Python minor and patch bumps are grouped into one PR; major bumps come separately).
+GitHub Actions runs this same suite on every push to `main` and every pull request, across Python 3.11–3.14. Dependabot also opens weekly pull requests for Python and GitHub Actions dependency updates (Python minor and patch bumps are grouped into one PR; major bumps come separately). It waits a week after a new release before proposing it, so a hijacked release is likely to be pulled before it ever reaches a PR; security fixes are not delayed.
 
 The test suite covers all pure-logic functions (JWT decoding, date chunking, filename parsing, deduplication logic, year-boundary edge cases) plus the Soren API retry/backoff behaviour against a stubbed `requests`. No real network calls are made.
 

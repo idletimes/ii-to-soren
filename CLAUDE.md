@@ -37,7 +37,8 @@ python -m pytest test_ii_download.py      # tests
 
 CI (`.github/workflows/ci.yml`) runs `pytest test_ii_download.py` on push to `main` and on
 PRs, over Python 3.11–3.14. Dependabot (`.github/dependabot.yml`) opens weekly pip and
-github-actions update PRs, with minor/patch bumps grouped.
+github-actions update PRs, with minor/patch bumps grouped. New releases wait a week
+(`cooldown`) before being proposed; security fixes are not delayed.
 
 ## Auth
 
