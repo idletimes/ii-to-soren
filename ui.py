@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -783,6 +783,11 @@ To push your data to Soren, you need an API key. Here's how to get one:
             if all_ok:
                 with open(CONFIG_FILE, "w") as f:
                     yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                _n_accts = sum(len(u.get("accounts", [])) for u in cfg["users"])
+                st.session_state.app_flash = (
+                    f"✓ Setup complete — saved {len(cfg['users'])} login(s) and "
+                    f"{_n_accts} account(s) to {CONFIG_FILE}"
+                )
                 del st.session_state.wiz_cfg
                 st.session_state.pop("onb_step", None)
                 st.session_state.pop("onb_auto_discover", None)
@@ -809,6 +814,10 @@ for _key, _default in [
         st.session_state[_key] = _default
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
+
+if flash := st.session_state.pop("app_flash", None):
+    st.success(flash)
+    st.toast(flash)
 
 tab_dl, tab_push, tab_cfg, tab_bm = st.tabs(["📥 Download", "📤 Push to Soren", "⚙️ Config", "🔖 Bookmarklet"])
 
@@ -1138,13 +1147,19 @@ with tab_cfg:
                 st.session_state.cfg_edit, f,
                 default_flow_style=False, sort_keys=False, allow_unicode=True,
             )
-        st.success("✓ Config saved")
+        # st.rerun() would wipe a message shown here, so flag it for the next run
+        st.session_state.cfg_flash = f"✓ Config saved to {CONFIG_FILE} at {datetime.now():%H:%M:%S}"
         del st.session_state.cfg_edit   # reload from file on next run
         st.rerun()
 
     if col_reset.button("↺ Reset from file"):
+        st.session_state.cfg_flash = "↺ Unsaved changes discarded — reloaded from file"
         del st.session_state.cfg_edit
         st.rerun()
+
+    if flash := st.session_state.pop("cfg_flash", None):
+        st.success(flash)
+        st.toast(flash)
 
 
 # ─── Bookmarklet ──────────────────────────────────────────────────────────────
